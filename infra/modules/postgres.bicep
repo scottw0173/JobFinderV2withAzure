@@ -141,7 +141,7 @@ resource createAppPrincipal 'Microsoft.Resources/deploymentScripts@2023-08-01' =
       tdnf install -y postgresql
       export PGPASSWORD=$(az account get-access-token --resource-type oss-rdbms --query accessToken -o tsv)
       psql "host=${SERVER_FQDN} port=5432 dbname=postgres user=${SCRIPT_IDENTITY_NAME} sslmode=require" \
-        -c "SELECT * FROM pgaadauth_create_principal('${APP_IDENTITY_NAME}', false, false);"
+        -c "SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_IDENTITY_NAME}') THEN pgaadauth_create_principal('${APP_IDENTITY_NAME}', false, false) END;"
     '''
     environmentVariables: [
       {

@@ -19,7 +19,7 @@ param openAiSkuName = 'S0'
 
 // Leave empty to use the Go code's defaultAzureModels (the CLAUDE.md §12
 // 12-model panel).
-param azureModelsJson = ''
+param azureModelsJson = '[{"name":"Kimi-K2.5","deployment":"Kimi-K2.5","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":20000,"rpm":20,"wantLogprobs":true}]'
 
 // Leave empty to default to '<acrLoginServer>/jobfinder:latest' - push the
 // image manually (no CI/CD wired yet) before running the Job.
