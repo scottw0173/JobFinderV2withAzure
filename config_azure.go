@@ -92,16 +92,7 @@ var defaultAzureModels = []ModelConfig{
 	{Name: "DeepSeek-V4-Pro", Protocol: "openai"},   // DeepSeek, MoE, native or Fireworks
 	{Name: "DeepSeek-V4-Flash", Protocol: "openai"}, // DeepSeek, MoE, native or Fireworks
 	{Name: "Kimi-K2.6", Protocol: "openai"},         // Moonshot, MoE, native or Fireworks
-	{
-		Name:         "Kimi-K2.5",
-		Deployment:   "Kimi-K2.5",
-		Protocol:     "openai",
-		BaseURL:      "https://jobfinderv2-resource.services.ai.azure.com/openai/v1",
-		AuthScope:    "https://ai.azure.com/.default",
-		TPM:          20000,
-		RPM:          20,
-		WantLogprobs: true,
-	},
+	{Name: "Kimi-K2.5", Protocol: "openai"},
 	{Name: "MiniMax-M2.5", Protocol: "openai"},               // MiniMax, MoE, Fireworks (FW-)
 	{Name: "GLM-5.2", Protocol: "openai"},                    // Zhipu, MoE, Fireworks (FW-)
 	{Name: "Nemotron-3-Super-120B-A12B", Protocol: "openai"}, // NVIDIA, MoE, Fireworks (FW-)

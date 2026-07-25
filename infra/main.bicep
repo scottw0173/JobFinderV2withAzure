@@ -31,7 +31,7 @@ param postgresSkuTier string = 'Burstable'
 param openAiSkuName string = 'S0'
 
 @description('JSON-encoded AZURE_MODELS override for the Container Apps Job - omit to use the Go code\'s defaultAzureModels.')
-param azureModelsJson string = ''
+param azureModelsJson string = '[{"name":"Kimi-K2.5","deployment":"Kimi-K2.5","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":20000,"rpm":20,"wantLogprobs":true}]'
 
 var uniqueSuffix = uniqueString(resourceGroup().id)
 
