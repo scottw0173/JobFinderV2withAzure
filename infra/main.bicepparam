@@ -13,8 +13,8 @@ param postgresSkuName = 'Standard_B1ms'
 param postgresSkuTier = 'Burstable'
 param openAiSkuName = 'S0'
 
-// Leave empty to use the Go code's defaultAzureModels (gpt-4.1-mini,
-// phi-4, llama-3.3-70b, deepseek-v3).
+// Leave empty to use the Go code's defaultAzureModels (the CLAUDE.md §12
+// 12-model panel).
 param azureModelsJson = ''
 
 // Leave empty to default to '<acrLoginServer>/jobfinder:latest' - push the

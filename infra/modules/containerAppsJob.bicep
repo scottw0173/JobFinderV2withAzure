@@ -28,7 +28,7 @@ param storageAccountName string
 @description('JSON-encoded model list override matching ModelConfig - omit to use the Go code\'s defaultAzureModels.')
 param azureModelsJson string = ''
 
-@description('Path inside the container where config files are expected - aspirational: no Blob-backed ConfigSource code exists yet, config_azure.go only reads a local filesystem path today.')
+@description('Path inside the container where config files are expected - dev-loop fallback only. config_azure.go reads this path when AZURE_STORAGE_ACCOUNT is unset; when set, it downloads from the storage account\'s config blob container via managed identity instead.')
 param azureConfigDir string = '/config'
 
 @description('Postgres server FQDN.')
@@ -70,15 +70,12 @@ var baseEnv = [
     value: storageAccountName
   }
   {
-    // KNOWN, DELIBERATE GAP: wireAzure() in main.go still expects a plain
-    // connection-string env var (pgxpool.New(ctx, dsn)) with no AAD-token
-    // wiring - that Go-side work is explicitly deferred (see plan). Since
-    // postgres.bicep disables password auth entirely, there is no password
-    // to put here even if the hard rule allowed it. This DSN is
-    // syntactically complete but will fail at connection time
-    // (pool.Ping) until the deferred Go-side AAD-token-as-password work
-    // lands. Not a bug - an intentional, visible failure rather than a
-    // hardcoded password.
+    // No password here because postgres.bicep disables password auth
+    // entirely (passwordAuth: 'Disabled') - the Go side fills it in at
+    // connect time with a fresh Entra token (newBeforeConnectHook in
+    // secrets_azure.go, wired in main.go's wireAzure). Confirmed working
+    // against a live Job run: pool.Ping succeeds via this AAD-token-as-
+    // password path.
     name: 'POSTGRES_DSN'
     value: 'postgres://${postgresAppPrincipalName}@${postgresFqdn}:5432/${postgresDatabaseName}?sslmode=require'
   }
