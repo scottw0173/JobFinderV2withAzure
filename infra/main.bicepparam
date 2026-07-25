@@ -1,5 +1,9 @@
 using 'main.bicep'
 
+param extraOpenAiAccountIds = [
+  '/subscriptions/5a1080c6-40d1-4367-a37d-ea6aff4c4824/resourceGroups/jobfinder-rg/providers/Microsoft.CognitiveServices/accounts/jobfinderv2-resource'
+]
+
 param namePrefix = 'jf-dev'
 param location = 'westus3'
 

@@ -1,5 +1,8 @@
 targetScope = 'resourceGroup'
 
+@description('Resource IDs of hand-created Foundry/OpenAI accounts (e.g. serverless-only models in other regions) that live outside this template but still need the app identity granted Cognitive Services OpenAI User. Must reside in this resource group. Leave empty if all models run on the Bicep-created account.')
+param extraOpenAiAccountIds array = []
+
 @description('Short name prefix driving all resource naming, e.g. "jf-dev".')
 param namePrefix string
 
@@ -158,7 +161,7 @@ module rbac 'modules/rbac.bicep' = {
     acrId: registry.outputs.id
     keyVaultId: keyVault.outputs.id
     storageAccountId: storage.outputs.id
-    openAiAccountId: openai.outputs.id
+    openAiAccountIds: union([openai.outputs.id], extraOpenAiAccountIds)
   }
 }
 

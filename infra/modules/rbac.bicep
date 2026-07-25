@@ -11,7 +11,7 @@ param keyVaultId string
 param storageAccountId string
 
 @description('Resource ID of the Cognitive Services / AI Foundry account.')
-param openAiAccountId string
+param openAiAccountIds array
 
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
@@ -65,16 +65,20 @@ resource storageBlobDataReader 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
-resource openAiAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
-  name: last(split(openAiAccountId, '/'))
-}
-
-resource cognitiveServicesOpenAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(openAiAccountId, uamiPrincipalId, cognitiveServicesOpenAiUserRoleId)
-  scope: openAiAccount
-  properties: {
-    principalId: uamiPrincipalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAiUserRoleId)
+resource openAiAccounts 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = [
+  for id in openAiAccountIds: {
+    name: last(split(id, '/'))
   }
-}
+]
+
+resource cognitiveServicesOpenAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
+  for (id, i) in openAiAccountIds: {
+    name: guid(id, uamiPrincipalId, cognitiveServicesOpenAiUserRoleId)
+    scope: openAiAccounts[i]
+    properties: {
+      principalId: uamiPrincipalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAiUserRoleId)
+    }
+  }
+]
