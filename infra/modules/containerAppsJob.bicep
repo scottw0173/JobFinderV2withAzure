@@ -45,6 +45,24 @@ param cronSchedule string = '0 13 * * *'
 
 var baseEnv = [
   {
+  // ID for user, specifically for data-evaluation purposes
+  // set to "test" currently for trial cron run
+  name: 'AZURE_CONTRIBUTOR_ID'
+  value: 'test'
+  }
+  {
+  // ID for resume, specifically for data-evalutation purposes
+  // set to "test" currently for trial cron run
+  name: 'AZURE_RESUME_ID'
+  value: 'test'
+  }
+  {
+  // ID for config, specifically for data-evaluation purposes
+  // set to "test" currently for trial cron run
+  name: 'AZURE_CONFIG_ID'
+  value: 'test'
+  }
+  {
   // Needed to avoid 400 error during fetch of AAD token
   // without this, you will  get ManagedIdentityCredential error  
   name: 'AZURE_CLIENT_ID'
