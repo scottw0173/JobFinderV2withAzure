@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -185,4 +186,15 @@ func (c *azureConfigSource) ResumeID() string {
 
 func (c *azureConfigSource) ConfigID() string {
 	return os.Getenv("AZURE_CONFIG_ID")
+}
+
+// RunMode selects between the "main" sweep (current behavior) and a future
+// "floor" tier (CLAUDE.md §2). Only "main" is wired end to end; handler()
+// refuses any other value rather than silently producing main-shaped data
+// mislabeled as something else.
+func (c *azureConfigSource) RunMode() string {
+	if mode := os.Getenv("AZURE_RUN_MODE"); mode != "" {
+		return strings.TrimSpace(mode)
+	}
+	return "main"
 }

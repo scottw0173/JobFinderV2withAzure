@@ -281,6 +281,13 @@ func handler(ctx context.Context) error {
 		return wrapped
 	}
 
+	// Only "main" is wired end to end (CLAUDE.md §2); refuse anything else
+	// fast rather than silently producing main-shaped data mislabeled as a
+	// mode ("floor") that has no repeat-scoring logic behind it yet.
+	if mode := app.Config.RunMode(); mode != "main" {
+		return traceErrorf("run mode %q not implemented (only \"main\" is wired; floor is a later edition)", mode)
+	}
+
 	// Run-level, not per-model: read once,
 	// applied to every model in this run so
 	// model-vs-condition stays identifiable.

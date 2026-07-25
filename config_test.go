@@ -139,6 +139,57 @@ func TestAzureConfigSourceUsesBlobWhenStorageAccountSet(t *testing.T) {
 	}
 }
 
+func TestAzureConfigSourceRunModeDefault(t *testing.T) {
+	t.Setenv("AZURE_RUN_MODE", "")
+	c, err := newAzureConfigSource(nil)
+	if err != nil {
+		t.Fatalf("newAzureConfigSource() error: %v", err)
+	}
+	if got := c.RunMode(); got != "main" {
+		t.Fatalf("azure RunMode() with AZURE_RUN_MODE unset = %q, want %q", got, "main")
+	}
+}
+
+func TestAzureConfigSourceRunModeOverride(t *testing.T) {
+	t.Setenv("AZURE_RUN_MODE", "floor")
+	c, err := newAzureConfigSource(nil)
+	if err != nil {
+		t.Fatalf("newAzureConfigSource() error: %v", err)
+	}
+	if got := c.RunMode(); got != "floor" {
+		t.Fatalf("azure RunMode() with AZURE_RUN_MODE=floor = %q, want %q", got, "floor")
+	}
+}
+
+func TestAWSConfigSourceRunModeAlwaysMain(t *testing.T) {
+	c := newAWSConfigSource(nil, "bucket", "gemini-3.1-flash-lite")
+	if got := c.RunMode(); got != "main" {
+		t.Fatalf("AWS RunMode() = %q, want %q (floor is Azure-only)", got, "main")
+	}
+}
+
+// TestNonMainRunModeIsRefused exercises the same "mode != main" check
+// handler() runs (CLAUDE.md §2), against a RunMode() of "floor". Standing up
+// a full handler() run needs a live-shaped collect/store/scorer chain
+// (CLAUDE.md §9 tier 2 - cheapest fake, not a realistic harness), which is
+// far more than this one string-comparison guard needs to prove.
+func TestNonMainRunModeIsRefused(t *testing.T) {
+	t.Setenv("AZURE_RUN_MODE", "floor")
+	c, err := newAzureConfigSource(nil)
+	if err != nil {
+		t.Fatalf("newAzureConfigSource() error: %v", err)
+	}
+	mode := c.RunMode()
+	if mode == "main" {
+		t.Fatal("test setup broken: expected a non-main mode")
+	}
+	got := traceErrorf("run mode %q not implemented (only \"main\" is wired; floor is a later edition)", mode)
+	want := `run mode "floor" not implemented (only "main" is wired; floor is a later edition)`
+	if got.Error() != want {
+		t.Fatalf("error message = %q, want %q", got.Error(), want)
+	}
+}
+
 func TestAzureConfigSourceReadsLocalFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "filterKeywords.json"), []byte(`{"include":[],"exclude":[]}`), 0o644); err != nil {

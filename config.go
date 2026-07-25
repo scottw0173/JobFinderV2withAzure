@@ -32,4 +32,8 @@ type ConfigSource interface {
 	ContributorID() string
 	ResumeID() string
 	ConfigID() string
+	// RunMode selects the run type: "main" (full set, current behavior) or
+	// "floor" (representative panel, repeated). Only "main" is implemented;
+	// "floor" is a later edition and the handler refuses it for now.
+	RunMode() string
 }

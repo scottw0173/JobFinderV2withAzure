@@ -75,3 +75,7 @@ func (c *awsConfigSource) BatchSize() int {
 func (c *awsConfigSource) ContributorID() string { return "" }
 func (c *awsConfigSource) ResumeID() string      { return "" }
 func (c *awsConfigSource) ConfigID() string      { return "" }
+
+// RunMode is always "main" on AWS: the floor/main run-kind split (CLAUDE.md
+// §2) is an Azure measurement-instrument concept.
+func (c *awsConfigSource) RunMode() string { return "main" }
