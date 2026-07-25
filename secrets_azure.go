@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -33,11 +32,7 @@ func (s *azureSecrets) Fetch(ctx context.Context, name string) (string, error) {
 // this is safe to call unconditionally, including in local dev where the
 // resulting credential is simply never exercised.
 func newAzureCredential() (azcore.TokenCredential, error) {
-	var opts *azidentity.ManagedIdentityCredentialOptions
-	if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
-		opts = &azidentity.ManagedIdentityCredentialOptions{ID: azidentity.ClientID(clientID)}
-	}
-	cred, err := azidentity.NewManagedIdentityCredential(opts)
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return nil, wrapErr("constructing managed identity credential", err)
 	}
