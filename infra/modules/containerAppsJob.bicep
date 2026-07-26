@@ -102,15 +102,17 @@ var baseEnv = [
   }
 ]
 
+var screenerEnv = empty(azureScreeningModel) ? [] : [
+ {
+    name: 'AZURE_SCREENING_MODEL'
+    value: azureScreeningModel
+  }
+]
 
 var modelsEnv = empty(azureModelsJson) ? [] : [
   {
     name: 'AZURE_MODELS'
     value: azureModelsJson
-  }
-  {
-    name: 'AZURE_SCREENING_MODEL'
-    value: azureScreeningModel
   }
 ]
 
@@ -150,7 +152,7 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
             cpu: json('1.0')
             memory: '2Gi'
           }
-          env: concat(baseEnv, modelsEnv)
+          env: concat(baseEnv, modelsEnv, screenerEnv)
         }
       ]
     }
