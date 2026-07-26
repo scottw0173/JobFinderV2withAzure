@@ -133,6 +133,4 @@ config) so a future user can retune without code edits:
   not implement them here. This task only needs 30 to be batch-divisible, not the
   batching itself.
 
-## Commit
 
-`feat`: fixed score-stratified 30-job panel for the Azure main run.

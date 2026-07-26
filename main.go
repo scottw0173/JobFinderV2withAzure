@@ -274,6 +274,22 @@ func handler(ctx context.Context) error {
 	matched := filterJobs(candidates, filter)
 	app.Logger.Info("matched jobs", "count", len(matched))
 
+	// Fixed score-stratified 30-job panel (CLAUDE.md): scoring the same
+	// curated set every run, instead of the full post-filter set fresh each
+	// time, lets score drift over the measurement window be attributed to
+	// the model rather than to job-set churn. Azure-only; AWS's PanelEnabled
+	// is hardcoded false, so this branch never executes there.
+	if app.cloudProvider == "azure" && app.Config.PanelEnabled() {
+		panelJobs, err := loadOrBuildPanel(ctx, app, matched)
+		if err != nil {
+			wrapped := wrapErr("error resolving job panel", err)
+			app.Logger.Error("cannot resolve panel", errAttr(wrapped))
+			return wrapped
+		}
+		matched = panelJobs
+		app.Logger.Info("using fixed panel for scoring", "count", len(matched))
+	}
+
 	models, err := app.Config.Models(ctx)
 	if err != nil {
 		wrapped := wrapErr("error loading model list", err)

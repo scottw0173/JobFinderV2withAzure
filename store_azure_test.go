@@ -251,3 +251,73 @@ func TestAzureStoreSeenJobsBumpAndDeleteAged(t *testing.T) {
 		t.Fatalf("expected DeleteAged to be a no-op on azure store, got %d deleted", n)
 	}
 }
+
+// TestAzureStoreBuildPanelAndActivePanelRoundtrip covers the fixed
+// score-stratified 30-job panel task's persistence layer: a build's job
+// snapshots must round-trip verbatim, and auto-detect (empty panelID) must
+// always resolve to the most-recently-built panel while an explicit,
+// older panel_id still resolves correctly (CLAUDE.md's "no env var/redeploy
+// needed after a normal build" decision).
+func TestAzureStoreBuildPanelAndActivePanelRoundtrip(t *testing.T) {
+	s := newTestAzureStore(t)
+	ctx := context.Background()
+
+	job1 := Job{Key: "k1", Company: "Acme", Title: "SWE", Location: "Remote", Source: "greenhouse", PostedAt: time.Now().Unix()}
+	job2 := Job{Key: "k2", Company: "Beta", Title: "MLE", Location: "Remote", Source: "ashby", PostedAt: time.Now().Unix() + 1}
+
+	firstID, err := s.BuildPanel(ctx, 111, []PanelJob{
+		{Job: job1, Band: "viable", ScreeningScore: 85},
+		{Job: job2, Band: "borderline", ScreeningScore: 65},
+	})
+	if err != nil {
+		t.Fatalf("BuildPanel (first): %v", err)
+	}
+
+	loaded, resolvedID, ok, err := s.ActivePanel(ctx, "")
+	if err != nil {
+		t.Fatalf("ActivePanel(\"\") after first build: %v", err)
+	}
+	if !ok {
+		t.Fatal("ActivePanel(\"\") returned ok=false right after a build")
+	}
+	if resolvedID != firstID {
+		t.Fatalf("ActivePanel(\"\") resolved %q, want the just-built panel %q", resolvedID, firstID)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("ActivePanel(\"\") returned %d jobs, want 2", len(loaded))
+	}
+	byKey := map[string]Job{}
+	for _, j := range loaded {
+		byKey[j.Key] = j
+	}
+	if byKey["k1"].Company != "Acme" || byKey["k2"].Company != "Beta" {
+		t.Fatalf("loaded snapshots don't match what was built: %+v", byKey)
+	}
+
+	time.Sleep(10 * time.Millisecond) // ensure built_at strictly increases for the ordering assertion below
+	secondID, err := s.BuildPanel(ctx, 222, []PanelJob{
+		{Job: job1, Band: "viable", ScreeningScore: 90},
+	})
+	if err != nil {
+		t.Fatalf("BuildPanel (second): %v", err)
+	}
+	if secondID == firstID {
+		t.Fatalf("second build produced the same panel_id as the first: %q", secondID)
+	}
+
+	_, resolvedID, ok, err = s.ActivePanel(ctx, "")
+	if err != nil {
+		t.Fatalf("ActivePanel(\"\") after second build: %v", err)
+	}
+	if !ok || resolvedID != secondID {
+		t.Fatalf("ActivePanel(\"\") after second build resolved (%q, %v), want the newer panel %q", resolvedID, ok, secondID)
+	}
+
+	pinned, resolvedID, ok, err := s.ActivePanel(ctx, firstID)
+	if err != nil {
+		t.Fatalf("ActivePanel(firstID) pinned: %v", err)
+	}
+	if !ok || resolvedID != firstID || len(pinned) != 2 {
+		t.Fatalf("pinning the older panel_id %q should still resolve it, got resolvedID=%q ok=%v jobs=%d", firstID, resolvedID, ok, len(pinned))
+	}
+}

@@ -79,3 +79,18 @@ func (c *awsConfigSource) ConfigID() string      { return "" }
 // RunMode is always "main" on AWS: the floor/main run-kind split (CLAUDE.md
 // §2) is an Azure measurement-instrument concept.
 func (c *awsConfigSource) RunMode() string { return "main" }
+
+// The fixed score-stratified 30-job panel is an Azure-only measurement-
+// instrument concept; AWS's single always-fresh Gemini pass has no panel
+// notion. PanelEnabled() is hardcoded false and, like every method below,
+// never reads env at all - AWS behavior is completely unaffected by any of
+// these knobs.
+func (c *awsConfigSource) PanelEnabled() bool                 { return false }
+func (c *awsConfigSource) PanelSize() int                     { return 0 }
+func (c *awsConfigSource) ScreeningModel() string             { return "" }
+func (c *awsConfigSource) ScoreBands() ([]ScoreBand, error)   { return nil, nil }
+func (c *awsConfigSource) BandTargets() ([]BandTarget, error) { return nil, nil }
+func (c *awsConfigSource) PanelSeed() int64                   { return 0 }
+func (c *awsConfigSource) MaxPerCompany() int                 { return 0 }
+func (c *awsConfigSource) ActivePanelID() string              { return "" }
+func (c *awsConfigSource) RebuildPanel() bool                 { return false }

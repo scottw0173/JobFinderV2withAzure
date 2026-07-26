@@ -32,6 +32,19 @@ func TestAWSConfigSourceDefaults(t *testing.T) {
 	if models[0].Protocol != "gemini" {
 		t.Fatalf("AWS model Protocol = %q, want %q", models[0].Protocol, "gemini")
 	}
+	if c.PanelEnabled() {
+		t.Fatal("AWS PanelEnabled() should be false - panel is an Azure-only concept")
+	}
+	if c.PanelSize() != 0 || c.ScreeningModel() != "" || c.PanelSeed() != 0 ||
+		c.MaxPerCompany() != 0 || c.ActivePanelID() != "" || c.RebuildPanel() {
+		t.Fatal("AWS panel knobs should all be zero-value/false")
+	}
+	if bands, err := c.ScoreBands(); err != nil || bands != nil {
+		t.Fatalf("AWS ScoreBands() = %v, %v, want nil, nil", bands, err)
+	}
+	if targets, err := c.BandTargets(); err != nil || targets != nil {
+		t.Fatalf("AWS BandTargets() = %v, %v, want nil, nil", targets, err)
+	}
 }
 
 func TestAzureConfigSourceDefaults(t *testing.T) {
@@ -42,6 +55,15 @@ func TestAzureConfigSourceDefaults(t *testing.T) {
 	t.Setenv("AZURE_CONTRIBUTOR_ID", "")
 	t.Setenv("AZURE_RESUME_ID", "")
 	t.Setenv("AZURE_CONFIG_ID", "")
+	t.Setenv("AZURE_PANEL_ENABLED", "")
+	t.Setenv("AZURE_PANEL_SIZE", "")
+	t.Setenv("AZURE_SCREENING_MODEL", "")
+	t.Setenv("AZURE_SCORE_BANDS", "")
+	t.Setenv("AZURE_BAND_TARGETS", "")
+	t.Setenv("AZURE_PANEL_SEED", "")
+	t.Setenv("AZURE_MAX_PER_COMPANY", "")
+	t.Setenv("AZURE_ACTIVE_PANEL_ID", "")
+	t.Setenv("AZURE_REBUILD_PANEL", "")
 	c, err := newAzureConfigSource(nil)
 	if err != nil {
 		t.Fatalf("newAzureConfigSource() error: %v", err)
@@ -80,6 +102,114 @@ func TestAzureConfigSourceDefaults(t *testing.T) {
 			t.Errorf("duplicate default model name %q", m.Name)
 		}
 		seen[m.Name] = true
+	}
+
+	if !c.PanelEnabled() {
+		t.Fatal("azure PanelEnabled() should default true")
+	}
+	if got := c.PanelSize(); got != 30 {
+		t.Fatalf("azure PanelSize() default = %d, want 30", got)
+	}
+	if got := c.ScreeningModel(); got != "DeepSeek-V4-Flash" {
+		t.Fatalf("azure ScreeningModel() default = %q, want %q", got, "DeepSeek-V4-Flash")
+	}
+	if c.PanelSeed() != 0 {
+		t.Fatalf("azure PanelSeed() default = %d, want 0 (unset)", c.PanelSeed())
+	}
+	if c.MaxPerCompany() != 0 {
+		t.Fatalf("azure MaxPerCompany() default = %d, want 0 (no cap)", c.MaxPerCompany())
+	}
+	if c.ActivePanelID() != "" {
+		t.Fatalf("azure ActivePanelID() default = %q, want empty (auto-detect)", c.ActivePanelID())
+	}
+	if c.RebuildPanel() {
+		t.Fatal("azure RebuildPanel() should default false")
+	}
+
+	bands, err := c.ScoreBands()
+	if err != nil {
+		t.Fatalf("ScoreBands() error: %v", err)
+	}
+	if len(bands) == 0 {
+		t.Fatal("default ScoreBands() should not be empty")
+	}
+	targets, err := c.BandTargets()
+	if err != nil {
+		t.Fatalf("BandTargets() error: %v", err)
+	}
+	sum, floorSum := 0, 0
+	maxMin := bands[0].Min
+	var topBand string
+	for _, b := range bands {
+		if b.Min > maxMin {
+			maxMin = b.Min
+			topBand = b.Name
+		}
+	}
+	for _, tg := range targets {
+		sum += tg.Target
+		if tg.Band == topBand {
+			floorSum = tg.Floor
+		}
+	}
+	if sum != 30 {
+		t.Fatalf("default BandTargets() targets sum to %d, want 30 (PanelSize default)", sum)
+	}
+	if floorSum == 0 {
+		t.Fatal("default BandTargets() should floor the top band (CLAUDE.md)")
+	}
+}
+
+func TestAzureConfigSourcePanelJSONOverrides(t *testing.T) {
+	t.Setenv("AZURE_SCORE_BANDS", `[{"name":"low","min":0,"max":50},{"name":"high","min":50,"max":100}]`)
+	t.Setenv("AZURE_BAND_TARGETS", `[{"band":"low","target":2,"floor":0},{"band":"high","target":4,"floor":4}]`)
+	c, err := newAzureConfigSource(nil)
+	if err != nil {
+		t.Fatalf("newAzureConfigSource() error: %v", err)
+	}
+	bands, err := c.ScoreBands()
+	if err != nil {
+		t.Fatalf("ScoreBands() error: %v", err)
+	}
+	if len(bands) != 2 || bands[0].Name != "low" || bands[1].Name != "high" {
+		t.Fatalf("ScoreBands() = %+v, want overridden 2-band list", bands)
+	}
+	targets, err := c.BandTargets()
+	if err != nil {
+		t.Fatalf("BandTargets() error: %v", err)
+	}
+	if len(targets) != 2 || targets[1].Floor != 4 {
+		t.Fatalf("BandTargets() = %+v, want overridden 2-target list with high floored", targets)
+	}
+}
+
+func TestAzureConfigSourcePanelEnabledOverride(t *testing.T) {
+	t.Setenv("AZURE_PANEL_ENABLED", "false")
+	c, err := newAzureConfigSource(nil)
+	if err != nil {
+		t.Fatalf("newAzureConfigSource() error: %v", err)
+	}
+	if c.PanelEnabled() {
+		t.Fatal("AZURE_PANEL_ENABLED=false should disable the panel")
+	}
+}
+
+func TestAzureConfigSourcePanelSeedAndActivePanelID(t *testing.T) {
+	t.Setenv("AZURE_PANEL_SEED", "424242")
+	t.Setenv("AZURE_ACTIVE_PANEL_ID", "panel-424242-20260725T000000Z")
+	t.Setenv("AZURE_REBUILD_PANEL", "true")
+	c, err := newAzureConfigSource(nil)
+	if err != nil {
+		t.Fatalf("newAzureConfigSource() error: %v", err)
+	}
+	if got := c.PanelSeed(); got != 424242 {
+		t.Fatalf("PanelSeed() = %d, want 424242", got)
+	}
+	if got := c.ActivePanelID(); got != "panel-424242-20260725T000000Z" {
+		t.Fatalf("ActivePanelID() = %q, want pinned value", got)
+	}
+	if !c.RebuildPanel() {
+		t.Fatal("RebuildPanel() should be true when AZURE_REBUILD_PANEL=true")
 	}
 }
 

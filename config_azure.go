@@ -189,3 +189,116 @@ func (c *azureConfigSource) RunMode() string {
 	}
 	return "main"
 }
+
+// PanelEnabled toggles the fixed score-stratified 30-job panel. Default true:
+// the panel is now the default main-run behavior. Set AZURE_PANEL_ENABLED=false
+// to fall back to scoring the full post-filter set, kept reachable per
+// CLAUDE.md's "additive, not deleted" guardrail.
+func (c *azureConfigSource) PanelEnabled() bool {
+	if raw := os.Getenv("AZURE_PANEL_ENABLED"); raw != "" {
+		if v, err := strconv.ParseBool(raw); err == nil {
+			return v
+		}
+	}
+	return true
+}
+
+func (c *azureConfigSource) PanelSize() int {
+	if raw := os.Getenv("AZURE_PANEL_SIZE"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 30
+}
+
+// ScreeningModel names the cheap model used once at panel-build time to
+// provisionally score the full post-filter set for stratification (CLAUDE.md).
+// Looked up by name against Models(), not defaultAzureModels directly, so it
+// inherits real BaseURL/TPM/RPM once configured.
+func (c *azureConfigSource) ScreeningModel() string {
+	if v := os.Getenv("AZURE_SCREENING_MODEL"); v != "" {
+		return v
+	}
+	return "DeepSeek-V4-Flash"
+}
+
+// defaultScoreBands/defaultBandTargets partition the 0-100 screening-score
+// range and allocate PanelSize's default of 30 slots across it, weighted
+// toward the informative borderline/viable region with the top band floored
+// (CLAUDE.md's "instrument, not sample" decision) - a few low anchors, no
+// slot wasted on an all-duds panel.
+var defaultScoreBands = []ScoreBand{
+	{Name: "reject", Min: 0, Max: 40},
+	{Name: "borderline_low", Min: 40, Max: 60},
+	{Name: "borderline_high", Min: 60, Max: 80},
+	{Name: "viable", Min: 80, Max: 100},
+}
+
+var defaultBandTargets = []BandTarget{
+	{Band: "reject", Target: 4, Floor: 0},
+	{Band: "borderline_low", Target: 8, Floor: 0},
+	{Band: "borderline_high", Target: 10, Floor: 0},
+	{Band: "viable", Target: 8, Floor: 8},
+}
+
+func (c *azureConfigSource) ScoreBands() ([]ScoreBand, error) {
+	raw := os.Getenv("AZURE_SCORE_BANDS")
+	if raw == "" {
+		return defaultScoreBands, nil
+	}
+	var bands []ScoreBand
+	if err := json.Unmarshal([]byte(raw), &bands); err != nil {
+		return nil, wrapErr("parsing AZURE_SCORE_BANDS", err)
+	}
+	return bands, nil
+}
+
+func (c *azureConfigSource) BandTargets() ([]BandTarget, error) {
+	raw := os.Getenv("AZURE_BAND_TARGETS")
+	if raw == "" {
+		return defaultBandTargets, nil
+	}
+	var targets []BandTarget
+	if err := json.Unmarshal([]byte(raw), &targets); err != nil {
+		return nil, wrapErr("parsing AZURE_BAND_TARGETS", err)
+	}
+	return targets, nil
+}
+
+// PanelSeed is required for a panel build (recorded alongside the panel for
+// reproducibility, CLAUDE.md) - 0 means unset, and the build path refuses to
+// proceed without a nonzero value rather than silently using an arbitrary one.
+func (c *azureConfigSource) PanelSeed() int64 {
+	if raw := os.Getenv("AZURE_PANEL_SEED"); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return v
+		}
+	}
+	return 0
+}
+
+func (c *azureConfigSource) MaxPerCompany() int {
+	if raw := os.Getenv("AZURE_MAX_PER_COMPANY"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+// ActivePanelID pins a run to a specific panel_id. Empty means auto-detect:
+// the run uses whichever panel_id has the greatest built_at, so a normal
+// panel rebuild becomes the new active panel with no env var/redeploy needed.
+func (c *azureConfigSource) ActivePanelID() string {
+	return strings.TrimSpace(os.Getenv("AZURE_ACTIVE_PANEL_ID"))
+}
+
+func (c *azureConfigSource) RebuildPanel() bool {
+	if raw := os.Getenv("AZURE_REBUILD_PANEL"); raw != "" {
+		if v, err := strconv.ParseBool(raw); err == nil {
+			return v
+		}
+	}
+	return false
+}

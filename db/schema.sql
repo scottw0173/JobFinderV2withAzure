@@ -60,3 +60,26 @@ CREATE TABLE scoring_events (
 CREATE INDEX ON scoring_events (composite_key);
 CREATE INDEX ON scoring_events (call_id);
 CREATE INDEX ON scoring_calls (model, scored_at);
+
+-- PROPOSED, NOT YET APPLIED (CLAUDE.md's fixed score-stratified 30-job
+-- panel task). One row per job selected into a panel build. Each run reads
+-- the active panel (panel_id with the greatest built_at, unless pinned via
+-- ActivePanelID) and scores job_snapshot - the frozen text captured at
+-- build time - never a fresh re-scrape, so a job disappearing from the
+-- source doesn't break the run and every run scores byte-identical input.
+-- No FK to jobs(composite_key): panel jobs must survive the source posting
+-- disappearing.
+CREATE TABLE panel_jobs (
+  panel_id        text        NOT NULL,   -- one panel build (seed + built_at tag)
+  stablekey       text        NOT NULL,
+  company         text        NOT NULL,
+  posted_at       timestamptz,
+  score_band      text        NOT NULL,   -- band this job was selected into
+  screening_score double precision,       -- provisional score used for selection (audit only, never scoring_calls)
+  job_snapshot    jsonb       NOT NULL,   -- frozen job payload used as scorer input
+  seed            bigint      NOT NULL,
+  built_at        timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (panel_id, stablekey)
+);
+
+CREATE INDEX ON panel_jobs (built_at DESC);

@@ -199,6 +199,18 @@ func (s *awsStore) ExportRows(ctx context.Context) ([]ExportRow, error) {
 	return rows, nil
 }
 
+// The fixed score-stratified 30-job panel is an Azure-only measurement-
+// instrument concept (CLAUDE.md); PanelEnabled() is always false on AWS
+// (config_aws.go), so handler() never calls either of these on awsStore.
+// They exist only to satisfy the shared Store interface.
+func (s *awsStore) BuildPanel(ctx context.Context, seed int64, selection []PanelJob) (string, error) {
+	return "", traceErrorf("BuildPanel is not supported on the AWS store")
+}
+
+func (s *awsStore) ActivePanel(ctx context.Context, panelID string) ([]Job, string, bool, error) {
+	return nil, "", false, traceErrorf("ActivePanel is not supported on the AWS store")
+}
+
 func itemKey(stablekey string, postedAt int64) map[string]types.AttributeValue {
 	return map[string]types.AttributeValue{
 		"stablekey": &types.AttributeValueMemberS{Value: stablekey},
