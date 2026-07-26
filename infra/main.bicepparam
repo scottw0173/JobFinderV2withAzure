@@ -21,6 +21,9 @@ param openAiSkuName = 'S0'
 // 12-model panel).
 param azureModelsJson = '[{"name":"Kimi-K2.5","deployment":"Kimi-K2.5","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":20000,"rpm":20,"wantLogprobs":true}]'
 
+//This model, by name, is what the program will pull for filling out the panel_jobs table
+param azureScreeningModel = 'Kimi-K2.5'
+
 // Leave empty to default to '<acrLoginServer>/jobfinder:latest' - push the
 // image manually (no CI/CD wired yet) before running the Job.
 param containerImage = ''
