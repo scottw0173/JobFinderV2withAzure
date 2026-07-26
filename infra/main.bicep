@@ -33,6 +33,9 @@ param openAiSkuName string = 'S0'
 @description('JSON-encoded AZURE_MODELS override for the Container Apps Job - omit to use the Go code\'s defaultAzureModels.')
 param azureModelsJson string = ''
 
+@description('Name of model that will be used to screen jobs to fill out the table, panel_jobs')
+param azureScreeningModel string = ''
+
 var uniqueSuffix = uniqueString(resourceGroup().id)
 
 // ---- Identity ----
@@ -146,6 +149,7 @@ module containerAppsJob 'modules/containerAppsJob.bicep' = {
     openAiEndpoint: openai.outputs.endpoint
     storageAccountName: storage.outputs.name
     azureModelsJson: azureModelsJson
+    azureScreeningModel: azureScreeningModel
     postgresFqdn: postgres.outputs.fqdn
     postgresDatabaseName: postgres.outputs.databaseName
     postgresAppPrincipalName: jobIdentity.outputs.name

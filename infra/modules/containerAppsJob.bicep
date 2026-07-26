@@ -28,6 +28,9 @@ param storageAccountName string
 @description('JSON-encoded model list override matching ModelConfig - omit to use the Go code\'s defaultAzureModels.')
 param azureModelsJson string = ''
 
+@description('Name of LLM model to use as screener. omit to use the default- DeepSeekV4-Flash')
+param azureScreeningModel string = ''
+
 @description('Path inside the container where config files are expected - dev-loop fallback only. config_azure.go reads this path when AZURE_STORAGE_ACCOUNT is unset; when set, it downloads from the storage account\'s config blob container via managed identity instead.')
 param azureConfigDir string = '/config'
 
@@ -99,10 +102,15 @@ var baseEnv = [
   }
 ]
 
+
 var modelsEnv = empty(azureModelsJson) ? [] : [
   {
     name: 'AZURE_MODELS'
     value: azureModelsJson
+  }
+  {
+    name: 'AZURE_SCREENING_MODEL'
+    value: azureScreeningModel
   }
 ]
 
