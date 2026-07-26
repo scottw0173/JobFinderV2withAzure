@@ -1,0 +1,48 @@
+name: CI
+
+# Build/vet/test gate. Credential-free by design: the two tests that need live
+# infra (scorer_openai, store_azure) self-skip when their env vars are unset, so
+# nothing here needs Azure, a database, or a running model.
+on:
+  push:
+    branches:
+      - main
+      - refactor/cloud-agnostic-refactoring # remove once this branch merges
+  pull_request:
+
+permissions:
+  contents: read
+
+# One run per ref; a new push cancels the previous in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod # tracks go.mod's toolchain; no version to drift
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race ./...

@@ -14,7 +14,7 @@ import (
 // of selection variance; batch size 10 minimizes HTTP calls over ~450 jobs.
 const (
 	screeningTemperature float32 = 0
-	screeningBatchSize           = 10
+	screeningBatchSize   int     = 2
 )
 
 // resolveScreeningModel looks up ScreeningModel()'s name against the real
