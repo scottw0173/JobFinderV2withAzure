@@ -9,6 +9,16 @@ import (
 	"time"
 )
 
+// deriveSeed produces a date+time panel seed (YYYYMMDDHHMMSS, UTC) used
+// when AZURE_PANEL_SEED is unset, so each panel's seed itself carries a
+// traceable build timestamp. The Format output is always 14 ASCII digits
+// (max 99991231235959, well within int64), so the parse error is
+// unreachable and safe to discard.
+func deriveSeed(now time.Time) int64 {
+	v, _ := strconv.ParseInt(now.UTC().Format("20060102150405"), 10, 64)
+	return v
+}
+
 // screeningTemperature/screeningBatchSize govern the one-off screening pass
 // that provisionally scores the full post-filter set for panel stratification
 // (CLAUDE.md's fixed 30-job panel task). Temperature 0 keeps a same-day
@@ -334,8 +344,7 @@ func loadOrBuildPanel(ctx context.Context, app *App, jobs []Job) ([]Job, error) 
 func buildPanel(ctx context.Context, app *App, jobs []Job) ([]Job, error) {
 	seed := app.Config.PanelSeed()
 	if seed == 0 {
-		now := time.Now().UTC()
-		seed, _ = strconv.ParseInt(now.Format("20060102150405"), 10, 64) // YYYYMMDDHHMMSS
+		seed = deriveSeed(time.Now())
 		app.Logger.Info("no AZURE_PANEL_SEED set; derived date+time seed", "seed", seed)
 	}
 
