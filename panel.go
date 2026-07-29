@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strconv"
+	"time"
 )
 
 // screeningTemperature/screeningBatchSize govern the one-off screening pass
@@ -332,7 +334,9 @@ func loadOrBuildPanel(ctx context.Context, app *App, jobs []Job) ([]Job, error) 
 func buildPanel(ctx context.Context, app *App, jobs []Job) ([]Job, error) {
 	seed := app.Config.PanelSeed()
 	if seed == 0 {
-		return nil, traceErrorf("missing panel seed - set AZURE_PANEL_SEED (required, recorded with the panel for reproducibility)")
+		now := time.Now().UTC()
+		seed, _ = strconv.ParseInt(now.Format("20060102150405"), 10, 64) // YYYYMMDDHHMMSS
+		app.Logger.Info("no AZURE_PANEL_SEED set; derived date+time seed", "seed", seed)
 	}
 
 	models, err := app.Config.Models(ctx)
