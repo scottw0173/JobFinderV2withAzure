@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 )
 
 // bucketByBand logs via the package-level app var when a job has no
@@ -222,5 +223,19 @@ func TestRoundRobinTakeOrder(t *testing.T) {
 	}
 	if posB > posA2 {
 		t.Fatalf("company B's 1st pick (pos %d) came after company A's 2nd pick (pos %d) - round robin broken", posB, posA2)
+	}
+}
+
+func TestDeriveSeed(t *testing.T) {
+	want := int64(20260729143005)
+	utc := time.Date(2026, 7, 29, 14, 30, 5, 0, time.UTC)
+	if got := deriveSeed(utc); got != want {
+		t.Fatalf("deriveSeed(UTC) = %d, want %d", got, want)
+	}
+	// non-UTC input must normalize to UTC before formatting
+	loc := time.FixedZone("MST", -7*3600)
+	local := time.Date(2026, 7, 29, 7, 30, 5, 0, loc) // == 14:30:05 UTC
+	if got := deriveSeed(local); got != want {
+		t.Fatalf("deriveSeed(non-UTC) = %d, want %d", got, want)
 	}
 }
