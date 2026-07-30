@@ -134,7 +134,7 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
         parallelism: 1
         replicaCompletionCount: 1
       }
-      replicaTimeout: 1800
+      replicaTimeout: 18000
       replicaRetryLimit: 0
       registries: [
         {
