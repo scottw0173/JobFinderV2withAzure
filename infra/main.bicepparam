@@ -22,7 +22,8 @@ param openAiSkuName = 'S0'
 param azureModelsJson = '''
 [
 {"name":"Kimi-K2.5","deployment":"Kimi-K2.5","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":20000,"rpm":20,"wantLogprobs":true},
-{"name":"gpt-5.4-mini","deployment":"gpt-5.4-mini","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":200000,"rpm":1000,"wantLogprobs":true}
+{"name":"gpt-5.4-mini","deployment":"gpt-5.4-mini","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":200000,"rpm":1000,"wantLogprobs":true},
+{"name":"gpt-5.3-codex","deployment":"gpt-5.3-codex","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":5000,"wantLogprobs":true}
 ]
 '''
 
