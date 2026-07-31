@@ -52,6 +52,9 @@ func TestNewBeforeConnectHookPropagatesCredentialError(t *testing.T) {
 }
 
 func TestDsnHasPassword(t *testing.T) {
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGPASSFILE", "/dev/null")
+
 	tests := []struct {
 		name string
 		dsn  string

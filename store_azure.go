@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -16,7 +18,7 @@ import (
 // call-level facts like batch_size and token usage), and scoring_events (one
 // row per job scored within a call, FK'd to both). Unlike AWS's DynamoDB impl
 // (one item per job, overwritten with the latest score), this preserves
-// every scoring event, per CLAUDE.md's hard rule.
+// every scoring event.
 type azureStore struct {
 	logger *slog.Logger
 	pool   *pgxpool.Pool
@@ -30,8 +32,10 @@ func newAzureStore(logger *slog.Logger, pool *pgxpool.Pool) *azureStore {
 // still grouped together.
 type scoringCall struct {
 	model       string
+	deployment  string
 	scoredAt    time.Time
 	temperature float64
+	usage       Usage
 	events      []ScoringEvent
 }
 
@@ -55,7 +59,13 @@ func groupByCall(events []ScoringEvent) []scoringCall {
 		if !ok {
 			i = len(calls)
 			idx[k] = i
-			calls = append(calls, scoringCall{model: e.Result.Model, scoredAt: e.Result.ScoredAt, temperature: e.Result.Temperature})
+			calls = append(calls, scoringCall{
+				model:       e.Result.Model,
+				deployment:  e.Result.Deployment,
+				scoredAt:    e.Result.ScoredAt,
+				temperature: e.Result.Temperature,
+				usage:       e.Result.Usage,
+			})
 		}
 		calls[i].events = append(calls[i].events, e)
 	}
@@ -87,24 +97,36 @@ func (s *azureStore) recordCall(ctx context.Context, call scoringCall, contribut
 	}
 	defer tx.Rollback(ctx) // no-op after Commit
 
-	// deployment and the itemized token-usage columns are left NULL:
-	// ModelConfig and the call's Usage never reach ScoringEvent/ScoreResult
-	// today (main.go's `tokens` total from ScoreBatch is local to the
-	// scoring loop) - wire those through when that plumbing lands. run_kind
-	// is hardcoded for the same reason: no floor-run trigger exists yet in
-	// ScoringEvent, real two-tier sampling wiring is future work.
+	// deployment and usage are call-level facts, duplicated
+	// onto every event in the batch by the scorer and taken-first here in
+	// groupByCall - same pattern already used for temperature. The
+	// itemized Usage fields are *int64, nil when the provider's response
+	// didn't itemize them; pgx passes a nil pointer through as SQL NULL,
+	// same mechanism relied on for EVScore. usage_raw is nullable JSONB, so
+	// an empty Raw blob is passed through as untyped nil -> SQL NULL rather
+	// than an empty string.
 	//
-	// contributorID/resumeID/configID/instructionsVersion (CLAUDE.md §10) are
+	// contributorID/resumeID/configID/instructionsVersion are
 	// constant for the whole run, unlike temperature (call.temperature),
 	// which genuinely varies per reconstructed call - so these are passed
 	// straight through as literal args rather than threaded through
 	// ScoreResult/groupByCall.
+	var usageRaw any
+	if len(call.usage.Raw) > 0 {
+		usageRaw = string(call.usage.Raw)
+	}
 	var callID int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO scoring_calls (model, batch_size, temperature_sent, run_kind, scored_at, contributor_id, resume_id, config_id, instructions_version)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO scoring_calls (
+			model, deployment, batch_size, temperature_sent, run_kind, scored_at,
+			input_uncached, cached_read, cache_write, output_tokens, reasoning_tokens, usage_raw,
+			contributor_id, resume_id, config_id, instructions_version
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING call_id
-	`, call.model, len(call.events), call.temperature, "main", call.scoredAt, contributorID, resumeID, configID, instructionsVersion).Scan(&callID)
+	`, call.model, call.deployment, len(call.events), call.temperature, "main", call.scoredAt,
+		call.usage.InputUncached, call.usage.CacheRead, call.usage.CacheWrite, call.usage.Output, call.usage.Reasoning, usageRaw,
+		contributorID, resumeID, configID, instructionsVersion).Scan(&callID)
 	if err != nil {
 		return wrapErr("insert scoring_calls row", err)
 	}
@@ -148,14 +170,13 @@ func (s *azureStore) recordEvent(ctx context.Context, tx pgx.Tx, callID int64, e
 		logprobs = string(e.Result.Logprobs)
 	} // else leave nil -> SQL NULL
 
+	// EVScore is *float64, nil when the EV path didn't fire (CLAUDE.md
+	// §4.6) - pgx passes a nil pointer through as SQL NULL directly, which
+	// is exactly the provenance signal ev_score is meant to carry.
 	_, err = tx.Exec(ctx, `
-		INSERT INTO scoring_events (call_id, composite_key, emitted_score, reasoning, raw, logprobs)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, callID, compositeKey, e.Result.Score, e.Result.Reasoning, string(e.Result.Raw), logprobs)
-	// ev_score left NULL: ScoreResult.Score conflates "emitted number" and
-	// "logprob EV where supported" into one field (scorer.go's doc comment),
-	// so there's no value distinct from emitted_score to store here yet -
-	// split ScoreResult before populating this column for real.
+		INSERT INTO scoring_events (call_id, composite_key, emitted_score, ev_score, reasoning, raw, logprobs)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, callID, compositeKey, e.Result.EmittedScore, e.Result.EVScore, e.Result.Reasoning, string(e.Result.Raw), logprobs)
 	return wrapErrIfSet("insert scoring_events row", err)
 }
 
@@ -175,12 +196,8 @@ func (s *azureStore) SeenJobs(ctx context.Context) ([]SeenJob, error) {
 			return nil, wrapErr("scan seen job row", err)
 		}
 		out = append(out, SeenJob{
-			Stablekey: stablekey,
-			PostedAt:  postedAt.Unix(),
-			// has_applied was dropped from the Azure schema entirely (see
-			// db/schema.sql) - CLAUDE.md defers the has_applied/sheet-editing
-			// feature and this append-only measurement store never populated
-			// it, so there's nothing to read back.
+			Stablekey:  stablekey,
+			PostedAt:   postedAt.Unix(),
 			HasApplied: false,
 			LastSeen:   lastSeen,
 		})
@@ -244,11 +261,82 @@ func (s *azureStore) ExportRows(ctx context.Context) ([]ExportRow, error) {
 			return nil, wrapErr("scan export row", err)
 		}
 		r.PostedAt = postedAt.Unix()
-		// has_applied no longer exists on Azure's jobs table - see SeenJobs.
 		r.HasApplied = false
 		out = append(out, r)
 	}
 	return out, wrapErrIfSet("iterate export rows", rows.Err())
+}
+
+// BuildPanel inserts one panel_jobs row per selected job, all under a single
+// new panel_id, in one transaction. panel_id encodes the seed and build
+// timestamp (matching the table's own "one panel build (seed + built_at tag)"
+// comment) purely as an opaque tag - MAX(built_at), not the string, is what
+// ActivePanel's auto-detect actually sorts by.
+func (s *azureStore) BuildPanel(ctx context.Context, seed int64, selection []PanelJob) (string, error) {
+	builtAt := time.Now().UTC()
+	panelID := fmt.Sprintf("panel-%d-%s", seed, builtAt.Format("20060102T150405Z"))
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", wrapErr("begin build panel tx", err)
+	}
+	defer tx.Rollback(ctx) // no-op after Commit
+
+	for _, pj := range selection {
+		payload, err := json.Marshal(pj.Job)
+		if err != nil {
+			return "", wrapErr("marshal panel job snapshot", err)
+		}
+		postedAt := time.Unix(pj.Job.PostedAt, 0)
+		_, err = tx.Exec(ctx, `
+			INSERT INTO panel_jobs (panel_id, stablekey, company, posted_at, score_band, screening_score, job_snapshot, seed, built_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, panelID, pj.Job.createStableKey(), pj.Job.Company, postedAt, pj.Band, pj.ScreeningScore, string(payload), seed, builtAt)
+		if err != nil {
+			return "", wrapErr("insert panel_jobs row", err)
+		}
+	}
+
+	return panelID, wrapErrIfSet("commit build panel tx", tx.Commit(ctx))
+}
+
+// ActivePanel returns the frozen job snapshots for panelID. An empty panelID
+// auto-detects the most-recently-built panel (MAX(built_at)) - the mechanism
+// that lets a normal panel rebuild become active without any env var/redeploy
+// step. ok is false (with no error) when no matching panel exists yet.
+func (s *azureStore) ActivePanel(ctx context.Context, panelID string) ([]Job, string, bool, error) {
+	if panelID == "" {
+		err := s.pool.QueryRow(ctx, `SELECT panel_id FROM panel_jobs ORDER BY built_at DESC LIMIT 1`).Scan(&panelID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, "", false, nil
+			}
+			return nil, "", false, wrapErr("resolve active panel_id", err)
+		}
+	}
+
+	rows, err := s.pool.Query(ctx, `SELECT job_snapshot FROM panel_jobs WHERE panel_id = $1`, panelID)
+	if err != nil {
+		return nil, panelID, false, wrapErr("query panel_jobs snapshots", err)
+	}
+	defer rows.Close()
+
+	var jobs []Job
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, panelID, false, wrapErr("scan panel_jobs row", err)
+		}
+		var j Job
+		if err := json.Unmarshal([]byte(raw), &j); err != nil {
+			return nil, panelID, false, wrapErr("unmarshal job_snapshot", err)
+		}
+		jobs = append(jobs, j)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, panelID, false, wrapErr("iterate panel_jobs rows", err)
+	}
+	return jobs, panelID, len(jobs) > 0, nil
 }
 
 func wrapErrIfSet(msg string, err error) error {

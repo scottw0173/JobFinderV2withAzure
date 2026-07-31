@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -26,18 +25,14 @@ func (s *azureSecrets) Fetch(ctx context.Context, name string) (string, error) {
 
 // newAzureCredential constructs the managed-identity credential used for
 // both Postgres (via newBeforeConnectHook) and Azure OpenAI (via
-// openaiScorer.authHeaderValue) - CLAUDE.md §9's keyless-auth structure.
+// openaiScorer.authHeaderValue) - keyless-auth structure.
 // AZURE_CLIENT_ID selects the user-assigned identity containerAppsJob.bicep
 // wires onto the Job (not a system-assigned identity); falls back to
 // default options if unset. Construction never touches the network, so
 // this is safe to call unconditionally, including in local dev where the
 // resulting credential is simply never exercised.
 func newAzureCredential() (azcore.TokenCredential, error) {
-	var opts *azidentity.ManagedIdentityCredentialOptions
-	if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
-		opts = &azidentity.ManagedIdentityCredentialOptions{ID: azidentity.ClientID(clientID)}
-	}
-	cred, err := azidentity.NewManagedIdentityCredential(opts)
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return nil, wrapErr("constructing managed identity credential", err)
 	}
@@ -45,7 +40,7 @@ func newAzureCredential() (azcore.TokenCredential, error) {
 }
 
 // postgresAADScope is the Entra scope for Postgres Flexible Server's
-// AAD-auth data plane. UNVERIFIED - noted from memory (CLAUDE.md §9); do
+// AAD-auth data plane. UNVERIFIED - noted from memory; do
 // not trust as known-correct until confirmed against a live Azure account.
 const postgresAADScope = "https://ossrdbms-aad.database.windows.net/.default"
 

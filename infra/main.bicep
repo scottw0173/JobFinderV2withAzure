@@ -1,5 +1,8 @@
 targetScope = 'resourceGroup'
 
+@description('Resource IDs of hand-created Foundry/OpenAI accounts (e.g. serverless-only models in other regions) that live outside this template but still need the app identity granted Cognitive Services OpenAI User. Must reside in this resource group. Leave empty if all models run on the Bicep-created account.')
+param extraOpenAiAccountIds array = []
+
 @description('Short name prefix driving all resource naming, e.g. "jf-dev".')
 param namePrefix string
 
@@ -29,6 +32,9 @@ param openAiSkuName string = 'S0'
 
 @description('JSON-encoded AZURE_MODELS override for the Container Apps Job - omit to use the Go code\'s defaultAzureModels.')
 param azureModelsJson string = ''
+
+@description('Name of model that will be used to screen jobs to fill out the table, panel_jobs')
+param azureScreeningModel string = ''
 
 var uniqueSuffix = uniqueString(resourceGroup().id)
 
@@ -137,10 +143,13 @@ module containerAppsJob 'modules/containerAppsJob.bicep' = {
     location: location
     environmentId: containerAppsEnv.outputs.id
     uamiId: jobIdentity.outputs.id
+    uamiClientId: jobIdentity.outputs.clientId
     acrLoginServer: registry.outputs.loginServer
     containerImage: empty(containerImage) ? '${registry.outputs.loginServer}/jobfinder:latest' : containerImage
     openAiEndpoint: openai.outputs.endpoint
+    storageAccountName: storage.outputs.name
     azureModelsJson: azureModelsJson
+    azureScreeningModel: azureScreeningModel
     postgresFqdn: postgres.outputs.fqdn
     postgresDatabaseName: postgres.outputs.databaseName
     postgresAppPrincipalName: jobIdentity.outputs.name
@@ -156,7 +165,7 @@ module rbac 'modules/rbac.bicep' = {
     acrId: registry.outputs.id
     keyVaultId: keyVault.outputs.id
     storageAccountId: storage.outputs.id
-    openAiAccountId: openai.outputs.id
+    openAiAccountIds: union([openai.outputs.id], extraOpenAiAccountIds)
   }
 }
 

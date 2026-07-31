@@ -13,6 +13,28 @@ type ModelConfig struct {
 	AuthScope    string // credential kind for this endpoint; structural only until keyless auth lands (§7/§9)
 }
 
+// ScoreBand is one band of the screening-score range (0-100, CLAUDE.md's
+// fixed-panel task) used to stratify panel selection. Bands are expected to
+// partition the range as half-open [Min,Max), except the band with the
+// greatest Min, which is treated as Max-inclusive so a perfect top score
+// isn't dropped.
+type ScoreBand struct {
+	Name string  `json:"name"`
+	Min  float64 `json:"min"`
+	Max  float64 `json:"max"`
+}
+
+// BandTarget is the desired slot count for one ScoreBand.Name in a panel
+// build, plus a guaranteed-minimum Floor (Floor <= Target). CLAUDE.md's "floor
+// the top band" is expressed this way rather than hardcoding which band is
+// "top" in code - the top band is just whichever ScoreBand has the greatest
+// Min.
+type BandTarget struct {
+	Band   string `json:"band"` // must match a ScoreBand.Name
+	Target int    `json:"target"`
+	Floor  int    `json:"floor"`
+}
+
 // ConfigSource resolves file-shaped app config (sources.json,
 // filterKeywords.json, instructions.md) plus the knobs that are
 // configuration, never forked code: rescore policy, model list, and
@@ -32,4 +54,21 @@ type ConfigSource interface {
 	ContributorID() string
 	ResumeID() string
 	ConfigID() string
+	// RunMode selects the run type: "main" (full set, current behavior) or
+	// "floor" (representative panel, repeated). Only "main" is implemented;
+	// "floor" is a later edition and the handler refuses it for now.
+	RunMode() string
+	// Panel knobs (CLAUDE.md's fixed score-stratified 30-job panel). This is
+	// an Azure-only measurement-instrument concept - AWS implementations
+	// return the zero value/false for every one of these, same convention as
+	// RunMode()/ContributorID().
+	PanelEnabled() bool
+	PanelSize() int
+	ScreeningModel() string
+	ScoreBands() ([]ScoreBand, error)
+	BandTargets() ([]BandTarget, error)
+	PanelSeed() int64      // 0 means unset; build path refuses to build without a nonzero seed
+	MaxPerCompany() int    // 0 means no cap
+	ActivePanelID() string // "" means auto-detect (most-recently built panel)
+	RebuildPanel() bool
 }

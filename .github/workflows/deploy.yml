@@ -1,13 +1,14 @@
 name: Deploy
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**.go'
-      - 'template.yaml'
-      - 'samconfig.toml'
-      - 'go.mod'
-      - 'go.sum'
+  workflow_dispatch: # Temporary dismantle of the AWS push path since this project focuses on 
+#  push:             # Azure. Leaving wiring in place for future development on agnostic CI/CD pipeline
+#    branches: [main]
+#    paths:
+#      - '**.go'
+#      - 'template.yaml'
+#      - 'samconfig.toml'
+#      - 'go.mod'
+#      - 'go.sum'
 permissions:
   id-token: write
   contents: read

@@ -91,17 +91,68 @@ type chatCompletionResponse struct {
 		} `json:"message"`
 		Logprobs json.RawMessage `json:"logprobs"` // captured verbatim; shape inspected only inside bestEffortScoreEV
 	} `json:"choices"`
-	Usage struct {
-		TotalTokens int `json:"total_tokens"`
-	} `json:"usage"`
+	Usage json.RawMessage `json:"usage"` // captured verbatim; parsed by parseOpenAIUsage (CLAUDE.md §4.2)
 }
 
-func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelConfig, temperature float32) ([]ScoreResult, float64, error) {
+// openaiUsage is the typed shape parseOpenAIUsage parses out of
+// chatCompletionResponse.Usage. The *_details sub-objects are pointers so
+// their absence is distinguishable from a present-but-zero count.
+type openaiUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	CompletionTokensDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+// parseOpenAIUsage builds a Usage from a raw OpenAI-compatible "usage"
+// object (CLAUDE.md §4.2). Cache and reasoning fields are gated
+// independently by their own *_details sub-object: absence of that
+// sub-object leaves both fields it would have populated as nil - the
+// undifferentiated prompt_tokens/completion_tokens total is known, but
+// "not itemized" isn't the same fact as "itemized as zero," so no inference
+// is made across a missing sub-object. Raw is set unconditionally as the
+// backstop even when parsing the typed fields fails or the object is empty.
+func parseOpenAIUsage(raw json.RawMessage) Usage {
+	usage := Usage{Raw: raw}
+	if len(raw) == 0 {
+		return usage
+	}
+	var u openaiUsage
+	if err := json.Unmarshal(raw, &u); err != nil {
+		return usage
+	}
+	usage.Total = float64(u.TotalTokens)
+
+	if u.PromptTokensDetails != nil {
+		cacheRead := int64(u.PromptTokensDetails.CachedTokens)
+		uncached := int64(u.PromptTokens - u.PromptTokensDetails.CachedTokens)
+		usage.CacheRead = &cacheRead
+		usage.InputUncached = &uncached
+	}
+	if u.CompletionTokensDetails != nil {
+		reasoning := int64(u.CompletionTokensDetails.ReasoningTokens)
+		output := int64(u.CompletionTokens - u.CompletionTokensDetails.ReasoningTokens)
+		usage.Reasoning = &reasoning
+		usage.Output = &output
+	}
+	// CacheWrite stays nil: no OpenAI-compatible dialect in the current
+	// panel exposes a cache-write count (that's the Anthropic Messages
+	// API's cache_creation_input_tokens - deferred with the third protocol
+	// scorer, CLAUDE.md §12).
+	return usage
+}
+
+func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelConfig, temperature float32) ([]ScoreResult, Usage, error) {
 	jobsJSON, err := json.Marshal(toPayload(jobs)) // gemini.go's jobPayload/toPayload - reused, not redefined
 	if err != nil {
 		wrapped := wrapErr("error marshalling jobs", err)
 		s.logger.Error("error marshalling jobs for scoring", errAttr(wrapped))
-		return nil, 0, wrapped
+		return nil, Usage{}, wrapped
 	}
 
 	schema := map[string]any{
@@ -149,7 +200,7 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 	if err != nil {
 		wrapped := wrapErr("error marshalling request", err)
 		s.logger.Error("error marshalling request for scoring", errAttr(wrapped))
-		return nil, 0, wrapped
+		return nil, Usage{}, wrapped
 	}
 
 	// BaseURL is per-model (CLAUDE.md §6/§12), not a field on s: native
@@ -160,7 +211,7 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 	if err != nil {
 		wrapped := wrapErr("error creating request", err)
 		s.logger.Error("error creating request for scoring", errAttr(wrapped))
-		return nil, 0, wrapped
+		return nil, Usage{}, wrapped
 	}
 	req.Header.Set("Content-Type", "application/json")
 	// OpenAI-compatible convention: Authorization: Bearer, whether the value
@@ -172,7 +223,7 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 	if err != nil {
 		wrapped := wrapErr("resolving auth for scoring", err)
 		s.logger.Error("error resolving auth for scoring", errAttr(wrapped))
-		return nil, 0, wrapped
+		return nil, Usage{}, wrapped
 	}
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)
@@ -182,26 +233,26 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 	if err != nil {
 		wrapped := wrapErr("error doing request", err)
 		s.logger.Error("error doing request for scoring", errAttr(wrapped))
-		return nil, 0, wrapped
+		return nil, Usage{}, wrapped
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		s.logger.Error("non-200 from openai-compatible endpoint",
 			slog.Int("status", resp.StatusCode), slog.String("body", string(body)))
-		return nil, 0, &statusError{code: resp.StatusCode} // classify() handles 5xx retry, unchanged
+		return nil, Usage{}, &statusError{code: resp.StatusCode} // classify() handles 5xx retry, unchanged
 	}
 
 	var cr chatCompletionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
 		wrapped := wrapErr("failed to decode envelope", err)
 		s.logger.Error("error decoding response for scoring", errAttr(wrapped))
-		return nil, 0, wrapped
+		return nil, Usage{}, wrapped
 	}
 	if len(cr.Choices) == 0 {
 		traced := traceErrorf("empty response from openai-compatible endpoint")
 		s.logger.Error("empty response for scoring", errAttr(traced))
-		return nil, 0, traced
+		return nil, Usage{}, traced
 	}
 
 	var envelope struct {
@@ -210,10 +261,11 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 	if err := json.Unmarshal([]byte(cr.Choices[0].Message.Content), &envelope); err != nil {
 		wrapped := wrapErr("failed to decode scores", err)
 		s.logger.Error("failed to decode scores for scoring", errAttr(wrapped))
-		return nil, 0, wrapped
+		return nil, Usage{}, wrapped
 	}
 
 	logprobs := cr.Choices[0].Logprobs
+	usage := parseOpenAIUsage(cr.Usage)
 	now := time.Now()
 	out := make([]ScoreResult, 0, len(envelope.Results))
 	for _, raw := range envelope.Results {
@@ -226,7 +278,7 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 			continue
 		}
 
-		score := item.Score
+		var evScore *float64
 		var lp json.RawMessage
 		if model.WantLogprobs && len(logprobs) > 0 {
 			// Same batch-level logprobs blob is stored verbatim on every
@@ -234,22 +286,25 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 			// "store raw" is satisfied even though it's duplicated per row.
 			lp = logprobs
 			if ev, ok := bestEffortScoreEV(cr.Choices[0].Message.Content, logprobs, item.Key, item.Score); ok {
-				score = ev
+				evScore = &ev
 			}
 		}
 
 		out = append(out, ScoreResult{
-			JobKey:      item.Key,
-			Model:       model.Name,
-			Score:       score,
-			Reasoning:   item.Reasoning,
-			Raw:         raw, // verbatim per-item bytes as emitted - never empty for anything appended here
-			Logprobs:    lp,
-			ScoredAt:    now,
-			Temperature: float64(temperature),
+			JobKey:       item.Key,
+			Model:        model.Name,
+			Deployment:   model.Deployment,
+			EmittedScore: item.Score,
+			EVScore:      evScore,
+			Usage:        usage,
+			Reasoning:    item.Reasoning,
+			Raw:          raw, // verbatim per-item bytes as emitted - never empty for anything appended here
+			Logprobs:     lp,
+			ScoredAt:     now,
+			Temperature:  float64(temperature),
 		})
 	}
-	return out, float64(cr.Usage.TotalTokens), nil
+	return out, usage, nil
 }
 
 // authHeaderValue resolves this request's Authorization header: token-based

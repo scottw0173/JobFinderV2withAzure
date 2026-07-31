@@ -17,6 +17,7 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
     name: skuName
   }
   properties: {
+    publicNetworkAccess: 'Enabled'
     // Required for Entra/AAD-based data-plane auth - without this, only
     // key-based auth is available.
     customSubDomainName: name
@@ -28,7 +29,7 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
 
 // gpt-4.1-mini: OpenAI-native, deploys via the standard OpenAI model
 // format. High confidence in this shape.
-resource gpt41Mini 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+/*resource gpt41Mini 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
   parent: account
   name: 'gpt-4.1-mini'
   sku: {
@@ -101,7 +102,8 @@ resource deepseekV3 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01
     }
   }
 }
-
+*/
 output id string = account.id
 output endpoint string = account.properties.endpoint
 output name string = account.name
+

@@ -102,6 +102,7 @@ resource humanAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@20
 // database-principal creation (not plain RBAC)" mechanism CLAUDE.md's hard
 // rule calls for.
 resource scriptAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2024-08-01' = {
+  dependsOn: [ humanAdmin ]
   parent: server
   name: scriptIdentityObjectId
   properties: {
@@ -136,17 +137,23 @@ resource createAppPrincipal 'Microsoft.Resources/deploymentScripts@2023-08-01' =
     cleanupPreference: 'OnSuccess'
     scriptContent: '''
       set -e
-      az postgres flexible-server execute \
-        --name "${SERVER_NAME}" \
-        --admin-user "${SCRIPT_IDENTITY_NAME}" \
-        --auth-type ActiveDirectoryIntegrated \
-        --querytext "SELECT * FROM pgaadauth_create_principal('${APP_IDENTITY_NAME}', false, false);"
+      az login --identity  --allow-no-subscriptions
+      tdnf install -y postgresql
+      export PGPASSWORD=$(az account get-access-token --resource-type oss-rdbms --query accessToken -o tsv)
+      psql "host=${SERVER_FQDN} port=5432 dbname=postgres user=${SCRIPT_IDENTITY_NAME} sslmode=require" \
+        -c "SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_IDENTITY_NAME}') THEN pgaadauth_create_principal('${APP_IDENTITY_NAME}', false, false) END;"
     '''
     environmentVariables: [
+      {
+        name:'SERVER_FQDN'
+        value: server.properties.fullyQualifiedDomainName
+      }
+      /*
       {
         name: 'SERVER_NAME'
         value: server.name
       }
+        */
       {
         name: 'SCRIPT_IDENTITY_NAME'
         value: scriptIdentityPrincipalName

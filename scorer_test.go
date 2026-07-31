@@ -11,7 +11,7 @@ func TestZipScoreEventsDropsUnmatchedJob(t *testing.T) {
 	a := &App{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
 
 	jobs := []Job{{Key: "a"}, {Key: "b"}}
-	results := []ScoreResult{{JobKey: "a", Score: 5}}
+	results := []ScoreResult{{JobKey: "a", EmittedScore: 5}}
 
 	events := zipScoreEvents(a, jobs, results)
 

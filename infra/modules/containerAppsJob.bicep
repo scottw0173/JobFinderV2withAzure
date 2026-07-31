@@ -10,6 +10,9 @@ param environmentId string
 @description('Resource ID of the Job\'s user-assigned identity.')
 param uamiId string
 
+@description('Client ID of the Job\'s UAMI, injected as AZURE_CLIENT_ID so the Go managed-identity credential picks the right identity.')
+param uamiClientId string
+
 @description('ACR login server, e.g. myregistry.azurecr.io.')
 param acrLoginServer string
 
@@ -19,10 +22,16 @@ param containerImage string
 @description('Azure OpenAI/Foundry account endpoint.')
 param openAiEndpoint string
 
+@description('Name of the storage account holding the config blob container - injected as AZURE_STORAGE_ACCOUNT so the blob-backed ConfigSource (config_azure.go) knows which account to read from.')
+param storageAccountName string
+
 @description('JSON-encoded model list override matching ModelConfig - omit to use the Go code\'s defaultAzureModels.')
 param azureModelsJson string = ''
 
-@description('Path inside the container where config files are expected - aspirational: no Blob-backed ConfigSource code exists yet, config_azure.go only reads a local filesystem path today.')
+@description('Name of LLM model to use as screener. omit to use the default- DeepSeekV4-Flash')
+param azureScreeningModel string = ''
+
+@description('Path inside the container where config files are expected - dev-loop fallback only. config_azure.go reads this path when AZURE_STORAGE_ACCOUNT is unset; when set, it downloads from the storage account\'s config blob container via managed identity instead.')
 param azureConfigDir string = '/config'
 
 @description('Postgres server FQDN.')
@@ -39,6 +48,30 @@ param cronSchedule string = '0 13 * * *'
 
 var baseEnv = [
   {
+  // ID for user, specifically for data-evaluation purposes
+  // set to "test" currently for trial cron run
+  name: 'AZURE_CONTRIBUTOR_ID'
+  value: 'test'
+  }
+  {
+  // ID for resume, specifically for data-evalutation purposes
+  // set to "test" currently for trial cron run
+  name: 'AZURE_RESUME_ID'
+  value: 'test'
+  }
+  {
+  // ID for config, specifically for data-evaluation purposes
+  // set to "test" currently for trial cron run
+  name: 'AZURE_CONFIG_ID'
+  value: 'test'
+  }
+  {
+  // Needed to avoid 400 error during fetch of AAD token
+  // without this, you will  get ManagedIdentityCredential error  
+  name: 'AZURE_CLIENT_ID'
+  value: uamiClientId
+  }
+  {
     // Azure-exclusive infra by design - CLAUDE.md: "Only the
     // deployment/infra is Azure-exclusive on this branch." Not
     // parametrized; this Job only ever wires the Azure path.
@@ -54,17 +87,25 @@ var baseEnv = [
     value: openAiEndpoint
   }
   {
-    // KNOWN, DELIBERATE GAP: wireAzure() in main.go still expects a plain
-    // connection-string env var (pgxpool.New(ctx, dsn)) with no AAD-token
-    // wiring - that Go-side work is explicitly deferred (see plan). Since
-    // postgres.bicep disables password auth entirely, there is no password
-    // to put here even if the hard rule allowed it. This DSN is
-    // syntactically complete but will fail at connection time
-    // (pool.Ping) until the deferred Go-side AAD-token-as-password work
-    // lands. Not a bug - an intentional, visible failure rather than a
-    // hardcoded password.
+    name: 'AZURE_STORAGE_ACCOUNT'
+    value: storageAccountName
+  }
+  {
+    // No password here because postgres.bicep disables password auth
+    // entirely (passwordAuth: 'Disabled') - the Go side fills it in at
+    // connect time with a fresh Entra token (newBeforeConnectHook in
+    // secrets_azure.go, wired in main.go's wireAzure). Confirmed working
+    // against a live Job run: pool.Ping succeeds via this AAD-token-as-
+    // password path.
     name: 'POSTGRES_DSN'
     value: 'postgres://${postgresAppPrincipalName}@${postgresFqdn}:5432/${postgresDatabaseName}?sslmode=require'
+  }
+]
+
+var screenerEnv = empty(azureScreeningModel) ? [] : [
+ {
+    name: 'AZURE_SCREENING_MODEL'
+    value: azureScreeningModel
   }
 ]
 
@@ -93,7 +134,7 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
         parallelism: 1
         replicaCompletionCount: 1
       }
-      replicaTimeout: 1800
+      replicaTimeout: 18000
       replicaRetryLimit: 0
       registries: [
         {
@@ -111,7 +152,7 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
             cpu: json('1.0')
             memory: '2Gi'
           }
-          env: concat(baseEnv, modelsEnv)
+          env: concat(baseEnv, modelsEnv, screenerEnv)
         }
       ]
     }

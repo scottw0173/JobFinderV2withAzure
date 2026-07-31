@@ -1,7 +1,7 @@
 -- One row per distinct live posting. Mutable liveness record.
 -- Re-scraped jobs re-match on composite_key (regenerated from the scrape),
 -- which is why it's the key rather than a surrogate.
-CREATE TABLE jobs (
+CREATE TABLE IF NOT EXISTS jobs (
     composite_key     TEXT PRIMARY KEY,          -- generated: stablekey + posted_at
     stablekey         TEXT NOT NULL,             -- kept separate for querying
     posted_at         TIMESTAMPTZ,               -- kept separate for querying
@@ -18,7 +18,7 @@ CREATE TABLE jobs (
 
 -- One row per HTTP scoring call (1..N jobs per call). Holds the call-level
 -- token facts the API reports ONCE for the whole batch — never per job.
-CREATE TABLE scoring_calls (
+CREATE TABLE IF NOT EXISTS scoring_calls (
     call_id           BIGSERIAL PRIMARY KEY,
     model             TEXT NOT NULL,              -- logical model (the weights)
     deployment        TEXT,                       -- where served (native vs FW-, endpoint)
@@ -46,7 +46,7 @@ CREATE TABLE scoring_calls (
 -- One row per (job scored in a call). This is THE event table: one job's
 -- result. batch_size lives on the call; per-job token apportionment is NOT
 -- stored (fabrication) — derive later from call tokens if ever needed.
-CREATE TABLE scoring_events (
+CREATE TABLE IF NOT EXISTS scoring_events (
     event_id          BIGSERIAL PRIMARY KEY,
     call_id           BIGINT NOT NULL REFERENCES scoring_calls(call_id),
     composite_key     TEXT NOT NULL REFERENCES jobs(composite_key),
@@ -57,6 +57,29 @@ CREATE TABLE scoring_events (
     logprobs          JSONB                       -- score-token distribution; NULL if unsupported
 );
 
-CREATE INDEX ON scoring_events (composite_key);
-CREATE INDEX ON scoring_events (call_id);
-CREATE INDEX ON scoring_calls (model, scored_at);
+CREATE INDEX IF NOT EXISTS ON scoring_events (composite_key);
+CREATE INDEX IF NOT EXISTS ON scoring_events (call_id);
+CREATE INDEX IF NOT EXISTS ON scoring_calls (model, scored_at);
+
+-- (CLAUDE.md's fixed score-stratified 30-job
+-- panel task). One row per job selected into a panel build. Each run reads
+-- the active panel (panel_id with the greatest built_at, unless pinned via
+-- ActivePanelID) and scores job_snapshot - the frozen text captured at
+-- build time - never a fresh re-scrape, so a job disappearing from the
+-- source doesn't break the run and every run scores byte-identical input.
+-- No FK to jobs(composite_key): panel jobs must survive the source posting
+-- disappearing.
+CREATE TABLE IF NOT EXISTS panel_jobs (
+  panel_id        text        NOT NULL,   -- one panel build (seed + built_at tag)
+  stablekey       text        NOT NULL,
+  company         text        NOT NULL,
+  posted_at       timestamptz,
+  score_band      text        NOT NULL,   -- band this job was selected into
+  screening_score double precision,       -- provisional score used for selection (audit only, never scoring_calls)
+  job_snapshot    jsonb       NOT NULL,   -- frozen job payload used as scorer input
+  seed            bigint      NOT NULL,
+  built_at        timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (panel_id, stablekey)
+);
+
+CREATE INDEX IF NOT EXISTS ON panel_jobs (built_at DESC);

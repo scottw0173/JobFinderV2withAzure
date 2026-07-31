@@ -110,7 +110,7 @@ func fetchJSON[T any](ctx context.Context, app *App, url string) (T, error) {
 func filterJobs(jobs []Job, filter *KeywordFilter) []Job {
 	var out []Job
 	for _, j := range jobs {
-		if j.IsRemote && filter.Matches(j.Title) {
+		if j.IsRemote && filter.Matches(j.Title+" "+j.Location) {
 			out = append(out, j)
 		}
 	}
