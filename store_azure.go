@@ -33,6 +33,7 @@ func newAzureStore(logger *slog.Logger, pool *pgxpool.Pool) *azureStore {
 type scoringCall struct {
 	model       string
 	deployment  string
+	batchIndex  int
 	scoredAt    time.Time
 	temperature float64
 	usage       Usage
@@ -62,6 +63,7 @@ func groupByCall(events []ScoringEvent) []scoringCall {
 			calls = append(calls, scoringCall{
 				model:       e.Result.Model,
 				deployment:  e.Result.Deployment,
+				batchIndex:  e.BatchIndex,
 				scoredAt:    e.Result.ScoredAt,
 				temperature: e.Result.Temperature,
 				usage:       e.Result.Usage,
@@ -79,13 +81,44 @@ func groupByCall(events []ScoringEvent) []scoringCall {
 // finest granularity the new schema allows: scoring_events rows within a
 // call share a single call_id FK, so the call is the atomic unit, not the
 // individual event.
+//
+// This is the TRUE persistence point (the events slice handler() builds up
+// is just an in-process accumulator; nothing lands in Postgres until here) -
+// so this is where rows_written and the run-end expected/actual tally are
+// logged, per the observability task. It also fixes a real bug: this used to
+// always return nil even when every call failed to persist, which made
+// handler()'s success/failure branch a lie. Now it returns a non-nil error
+// whenever at least one call failed, aggregating the count.
 func (s *azureStore) RecordScores(ctx context.Context, events []ScoringEvent, contributorID, resumeID, configID, instructionsVersion string) error {
-	for _, call := range groupByCall(events) {
+	expectedTotal := len(events)
+	actualTotal := 0
+	perModel := map[string]int{}
+	calls := groupByCall(events)
+	failedCalls := 0
+
+	for _, call := range calls {
 		if err := s.recordCall(ctx, call, contributorID, resumeID, configID, instructionsVersion); err != nil {
+			failedCalls++
 			s.logger.Error("failed to record scoring call", errAttr(err),
-				slog.String("model", call.model), slog.Int("batch_size", len(call.events)))
+				slog.String("model", call.model), slog.Int("batch_index", call.batchIndex),
+				slog.Int("batch_size", len(call.events)), slog.String("table", "scoring_calls/scoring_events"),
+				slog.String("outcome", "failed"), slog.String("error_class", errorClass(err)))
 			continue
 		}
+		actualTotal += len(call.events)
+		perModel[call.model] += len(call.events)
+		s.logger.Info("scoring call persisted",
+			slog.String("model", call.model), slog.Int("batch_index", call.batchIndex),
+			slog.Int("batch_size", len(call.events)), slog.Int("rows_written", len(call.events)),
+			slog.String("table", "scoring_events"), slog.String("outcome", "ok"))
+	}
+
+	s.logger.Info("run end",
+		slog.Int("expected_total", expectedTotal), slog.Int("actual_total", actualTotal),
+		slog.Any("per_model", perModel))
+
+	if failedCalls > 0 {
+		return traceErrorf("%d of %d scoring calls failed to persist", failedCalls, len(calls))
 	}
 	return nil
 }

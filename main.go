@@ -274,6 +274,11 @@ func handler(ctx context.Context) error {
 	matched := filterJobs(candidates, filter)
 	app.Logger.Info("matched jobs", "count", len(matched))
 
+	// panelSize stays at the sentinel -1 ("panel disabled") unless the panel
+	// branch below actually runs - never conflated with a legitimately empty
+	// panel (CLAUDE.md observability task: "rows actually read from panel_jobs").
+	panelSize := -1
+
 	// Fixed score-stratified 30-job panel (CLAUDE.md): scoring the same
 	// curated set every run, instead of the full post-filter set fresh each
 	// time, lets score drift over the measurement window be attributed to
@@ -287,6 +292,7 @@ func handler(ctx context.Context) error {
 			return wrapped
 		}
 		matched = panelJobs
+		panelSize = len(matched)
 		app.Logger.Info("using fixed panel for scoring", "count", len(matched))
 	}
 
@@ -300,7 +306,8 @@ func handler(ctx context.Context) error {
 	// Only "main" is wired end to end (CLAUDE.md §2); refuse anything else
 	// fast rather than silently producing main-shaped data mislabeled as a
 	// mode ("floor") that has no repeat-scoring logic behind it yet.
-	if mode := app.Config.RunMode(); mode != "main" {
+	mode := app.Config.RunMode()
+	if mode != "main" {
 		return traceErrorf("run mode %q not implemented (only \"main\" is wired; floor is a later edition)", mode)
 	}
 
@@ -325,6 +332,13 @@ func handler(ctx context.Context) error {
 			return traceErrorf("missing contributor/resume/config identity - set AZURE_CONTRIBUTOR_ID, AZURE_RESUME_ID, AZURE_CONFIG_ID (CLAUDE.md §10)")
 		}
 	}
+
+	// One line marking the start of the scoring sweep with every top-level
+	// run condition (CLAUDE.md observability task) - lets Log Analytics
+	// answer "what was this run configured to do" before diving into
+	// per-batch/per-call detail below.
+	app.Logger.Info("run start",
+		"panel_size", panelSize, "batch_size", batchSize, "model_count", len(models), "run_kind", mode)
 
 	var events []ScoringEvent
 	for _, model := range models {
@@ -364,6 +378,8 @@ func handler(ctx context.Context) error {
 		for i := 0; i < len(matched); i += batchSize {
 			<-limiter.C // RPM limiter
 			end := min(i+batchSize, len(matched))
+			batchIndex := i / batchSize
+			jobsSent := end - i
 
 			tokenEstimate := 3000.0 // initial for estimated prompt/resume tokens
 			var descChars int
@@ -375,30 +391,46 @@ func handler(ctx context.Context) error {
 			if err := throttle.reserve(ctx, tokenEstimate); err != nil {
 				break
 			}
-			results, usage, err := app.scoreBatchRetry(ctx, scorer, matched[i:end], model, temperature)
+			results, usage, err := app.scoreBatchRetry(ctx, scorer, matched[i:end], model, temperature, batchIndex)
 			if err != nil {
-				app.Logger.Error("aborting run, batch failed", "start", i, "model", model.Name, errAttr(err))
+				app.Logger.Error("scoring batch failed",
+					"model", model.Name, "batch_index", batchIndex, "batch_size", batchSize,
+					"jobs_sent", jobsSent, "scores_parsed", 0, "outcome", "failed",
+					"error_class", errorClass(err), errAttr(err))
 				break
 			}
-			if usage.Total > 0 {
-				app.Logger.Info("token estimate calibration",
-					"est", tokenEstimate,
-					"actual_total", usage.Total,
-					"length of descriptions", descChars,
-					"chars_per_token", float64(descChars)/usage.Total,
-					"est_ratio", tokenEstimate/usage.Total)
-			} else {
-				app.Logger.Warn("zero token count on success path- skipping calibration", "start", i)
+
+			// One consolidated line per batch (not three) - jobs_sent vs
+			// scores_parsed surfaces a batch that returned short/malformed
+			// JSON and silently dropped rows; the calibration fields
+			// (est/actual_total/est_ratio) ride along only when the provider
+			// actually reported usage, same condition the old two-branch
+			// calibration/warn logging used.
+			scoresParsed := len(results)
+			outcome := "ok"
+			if scoresParsed < jobsSent {
+				outcome = "partial"
 			}
+			logArgs := []any{
+				"model", model.Name, "batch_index", batchIndex, "batch_size", batchSize,
+				"jobs_sent", jobsSent, "scores_parsed", scoresParsed, "outcome", outcome,
+			}
+			if usage.Total > 0 {
+				logArgs = append(logArgs,
+					"est", tokenEstimate, "actual_total", usage.Total, "est_ratio", tokenEstimate/usage.Total)
+			}
+			app.Logger.Info("scoring batch complete", logArgs...)
+
 			throttle.record(usage.Total)
-			events = append(events, zipScoreEvents(app, matched[i:end], results)...)
+			events = append(events, zipScoreEvents(app, matched[i:end], results, batchIndex)...)
 		}
 		limiter.Stop()
 	}
+	// RecordScores itself logs the real accounting (per-call persisted rows,
+	// destination tables, and a run-end expected/actual/per-model tally) -
+	// see store_azure.go. This is just the pass/fail signal at the call site.
 	if err := app.Store.RecordScores(ctx, events, contributorID, resumeID, configID, app.InstructionsVersion); err != nil {
-		app.Logger.Error("cannot write results to store", errAttr(err))
-	} else {
-		app.Logger.Info("results successfully written to store")
+		app.Logger.Error("store phase had failures", errAttr(err))
 	}
 	rows, err := app.Store.ExportRows(ctx)
 	if err != nil {

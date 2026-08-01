@@ -13,7 +13,7 @@ func TestZipScoreEventsDropsUnmatchedJob(t *testing.T) {
 	jobs := []Job{{Key: "a"}, {Key: "b"}}
 	results := []ScoreResult{{JobKey: "a", EmittedScore: 5}}
 
-	events := zipScoreEvents(a, jobs, results)
+	events := zipScoreEvents(a, jobs, results, 0)
 
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1", len(events))

@@ -43,6 +43,14 @@ type PanelJob struct {
 type ScoringEvent struct {
 	Job    Job
 	Result ScoreResult
+
+	// BatchIndex is this event's position in the run's batch-size sweep
+	// (i/batchSize in handler()'s scoring loop), stamped by zipScoreEvents.
+	// Lets a scoring-time log line (jobs_sent/scores_parsed) be correlated in
+	// Log Analytics with the persistence-time log line (rows_written) for the
+	// same batch, since those two facts aren't knowable at the same point in
+	// the code (CLAUDE.md observability task). Unused/always 0 on AWS.
+	BatchIndex int
 }
 
 type SeenJob struct {

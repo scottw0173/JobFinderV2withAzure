@@ -82,7 +82,7 @@ func screenJobs(ctx context.Context, app *App, jobs []Job, model ModelConfig) (m
 		if err := throttle.reserve(ctx, tokenEstimate); err != nil {
 			return nil, wrapErr("throttle reserve during screening", err)
 		}
-		results, usage, err := app.scoreBatchRetry(ctx, scorer, jobs[i:end], model, screeningTemperature)
+		results, usage, err := app.scoreBatchRetry(ctx, scorer, jobs[i:end], model, screeningTemperature, i/screeningBatchSize)
 		if err != nil {
 			return nil, wrapErr(fmt.Sprintf("screening batch failed at %d", i), err)
 		}
