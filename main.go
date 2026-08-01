@@ -214,86 +214,115 @@ func wireAzure(ctx context.Context, app *App) error {
 }
 
 func handler(ctx context.Context) error {
-	all, err := collect(ctx, app)
-	if err != nil {
-		wrapped := wrapErr("error collecting jobs", err)
-		app.Logger.Error("cannot collect jobs", errAttr(wrapped))
-		return wrapped
-	}
-
-	seenJobs, err := app.Store.SeenJobs(ctx)
-	if err != nil {
-		app.Logger.Error("cannot read results from store", errAttr(err))
-	}
-	seenSet := seenJobKeySet(seenJobs)
-	var fresh []Job
-	app.Logger.Debug("checking again seen set begins", "time", time.Now())
-	for _, job := range all {
-		if !seenSet[job.createCompositeKey()] {
-			fresh = append(fresh, job)
-		}
-	}
-	liveKeys := make(map[string]struct{}, len(all))
-	for _, job := range all {
-		liveKeys[job.createCompositeKey()] = struct{}{}
-	}
-	now := time.Now()
-	cutoff := now.Add(-48 * time.Hour)
-	var toBump, aged []SeenJob
-	for _, item := range seenJobs {
-		if _, live := liveKeys[item.compositeKey()]; live {
-			toBump = append(toBump, item)
-		} else if item.LastSeen.Before(cutoff) && !item.HasApplied {
-			aged = append(aged, item)
-		}
-	}
-	app.Logger.Info("updating 'last_seen' for active entries", "count", len(toBump))
-	if err := app.Store.BumpLastSeen(ctx, toBump, now); err != nil {
-		app.Logger.Error("cannot update last seen", errAttr(err))
-	}
-	app.Logger.Info("deleting aged out entries", "count", len(aged))
-	if _, err := app.Store.DeleteAged(ctx, aged); err != nil {
-		app.Logger.Error("cannot delete aged entries", errAttr(err))
-	}
-	app.Logger.Debug("checking again seen set ends", "time", time.Now())
-
-	filter, err := LoadKeywordFilter(ctx, app)
-	if err != nil {
-		wrapped := wrapErr("error loading filter file", err)
-		app.Logger.Error("cannot load filtering data ", errAttr(wrapped))
-		return wrapped
-	}
-
-	// Rescore policy is configuration, not forked code: AWS skips jobs it has
-	// already scored (fresh only); Azure re-scores every currently-live job
-	// each run to measure cross-model/temporal drift.
-	candidates := fresh
-	if app.Config.RescoreEveryRun() {
-		candidates = all
-	}
-	matched := filterJobs(candidates, filter)
-	app.Logger.Info("matched jobs", "count", len(matched))
-
-	// panelSize stays at the sentinel -1 ("panel disabled") unless the panel
-	// branch below actually runs - never conflated with a legitimately empty
-	// panel (CLAUDE.md observability task: "rows actually read from panel_jobs").
-	panelSize := -1
-
 	// Fixed score-stratified 30-job panel (CLAUDE.md): scoring the same
 	// curated set every run, instead of the full post-filter set fresh each
 	// time, lets score drift over the measurement window be attributed to
 	// the model rather than to job-set churn. Azure-only; AWS's PanelEnabled
-	// is hardcoded false, so this branch never executes there.
-	if app.cloudProvider == "azure" && app.Config.PanelEnabled() {
-		panelJobs, err := loadOrBuildPanel(ctx, app, matched)
+	// is hardcoded false, so usePanel is always false there.
+	usePanel := app.cloudProvider == "azure" && app.Config.PanelEnabled()
+
+	// panelSize stays at the sentinel -1 ("panel disabled") unless a panel
+	// branch below actually runs - never conflated with a legitimately empty
+	// panel (CLAUDE.md observability task: "rows actually read from panel_jobs").
+	panelSize := -1
+	var matched []Job
+
+	// Scraping bypass (CLAUDE.md §2): a non-empty panel_jobs means the
+	// scrape/seen-set/filter stages below have nothing to contribute this
+	// run - the panel is frozen and rescored verbatim every run. Checked
+	// before collect() so the bypass actually saves the ATS calls, not just
+	// the panel build.
+	if usePanel && !app.Config.RebuildPanel() {
+		pinned := app.Config.ActivePanelID()
+		loaded, resolvedID, ok, err := app.Store.ActivePanel(ctx, pinned)
 		if err != nil {
-			wrapped := wrapErr("error resolving job panel", err)
+			wrapped := wrapErr("error resolving active panel", err)
 			app.Logger.Error("cannot resolve panel", errAttr(wrapped))
 			return wrapped
 		}
-		matched = panelJobs
-		panelSize = len(matched)
-		app.Logger.Info("using fixed panel for scoring", "count", len(matched))
+		if ok {
+			app.Logger.Info("panel_jobs populated, skipping scrape/filter/seen-set",
+				"panel_id", resolvedID, "count", len(loaded))
+			matched = loaded
+			panelSize = len(matched)
+		} else if pinned != "" {
+			return traceErrorf("AZURE_ACTIVE_PANEL_ID %q pins a panel that does not exist", pinned)
+		}
+		// ok==false, pinned=="": no panel yet - fall through and build one.
+	}
+
+	if matched == nil {
+		all, err := collect(ctx, app)
+		if err != nil {
+			wrapped := wrapErr("error collecting jobs", err)
+			app.Logger.Error("cannot collect jobs", errAttr(wrapped))
+			return wrapped
+		}
+
+		seenJobs, err := app.Store.SeenJobs(ctx)
+		if err != nil {
+			app.Logger.Error("cannot read results from store", errAttr(err))
+		}
+		seenSet := seenJobKeySet(seenJobs)
+		var fresh []Job
+		app.Logger.Debug("checking again seen set begins", "time", time.Now())
+		for _, job := range all {
+			if !seenSet[job.createCompositeKey()] {
+				fresh = append(fresh, job)
+			}
+		}
+		liveKeys := make(map[string]struct{}, len(all))
+		for _, job := range all {
+			liveKeys[job.createCompositeKey()] = struct{}{}
+		}
+		now := time.Now()
+		cutoff := now.Add(-48 * time.Hour)
+		var toBump, aged []SeenJob
+		for _, item := range seenJobs {
+			if _, live := liveKeys[item.compositeKey()]; live {
+				toBump = append(toBump, item)
+			} else if item.LastSeen.Before(cutoff) && !item.HasApplied {
+				aged = append(aged, item)
+			}
+		}
+		app.Logger.Info("updating 'last_seen' for active entries", "count", len(toBump))
+		if err := app.Store.BumpLastSeen(ctx, toBump, now); err != nil {
+			app.Logger.Error("cannot update last seen", errAttr(err))
+		}
+		app.Logger.Info("deleting aged out entries", "count", len(aged))
+		if _, err := app.Store.DeleteAged(ctx, aged); err != nil {
+			app.Logger.Error("cannot delete aged entries", errAttr(err))
+		}
+		app.Logger.Debug("checking again seen set ends", "time", time.Now())
+
+		filter, err := LoadKeywordFilter(ctx, app)
+		if err != nil {
+			wrapped := wrapErr("error loading filter file", err)
+			app.Logger.Error("cannot load filtering data ", errAttr(wrapped))
+			return wrapped
+		}
+
+		// Rescore policy is configuration, not forked code: AWS skips jobs it
+		// has already scored (fresh only); Azure re-scores every
+		// currently-live job each run to measure cross-model/temporal drift.
+		candidates := fresh
+		if app.Config.RescoreEveryRun() {
+			candidates = all
+		}
+		matched = filterJobs(candidates, filter)
+		app.Logger.Info("matched jobs", "count", len(matched))
+
+		if usePanel {
+			panelJobs, err := loadOrBuildPanel(ctx, app, matched)
+			if err != nil {
+				wrapped := wrapErr("error resolving job panel", err)
+				app.Logger.Error("cannot resolve panel", errAttr(wrapped))
+				return wrapped
+			}
+			matched = panelJobs
+			panelSize = len(matched)
+			app.Logger.Info("using fixed panel for scoring", "count", len(matched))
+		}
 	}
 
 	models, err := app.Config.Models(ctx)
