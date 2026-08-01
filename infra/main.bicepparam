@@ -26,9 +26,9 @@ param azureModelsJson = '''
 {"name":"gpt-5.4-nano","deployment":"gpt-5.4-nano","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":2500000,"rpm":2500,"wantLogprobs":true},
 {"name":"gpt-5.4","deployment":"gpt-5.4","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":5000,"wantLogprobs":true},
 {"name":"gpt-5.5","deployment":"gpt-5.5","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":true},
-{"name":"gpt-5.6-terra","deployment":"gpt-5.6-terra","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":true},
-{"name":"gpt-5.6-luna","deployment":"gpt-5.6-luna","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":true},
-{"name":"gpt-5.6-sol","deployment":"gpt-5.6-sol","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":true}
+{"name":"gpt-5.6-terra","deployment":"gpt-5.6-terra","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":false},
+{"name":"gpt-5.6-luna","deployment":"gpt-5.6-luna","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":false},
+{"name":"gpt-5.6-sol","deployment":"gpt-5.6-sol","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":false}
 ]
 '''
 
