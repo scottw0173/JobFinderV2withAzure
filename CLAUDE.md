@@ -56,6 +56,20 @@ framing that used to live here and in §9.
 - Config files (`instructions.md`, `sources.json`, `filterKeywords.json`) are
   **uploaded to the `config` blob container** (via the deployer's identity, which
   holds Storage Blob Data Contributor; the app UAMI holds only Blob Data Reader).
+  **Fixed 30-job panel (built and in use):**
+- The main run no longer scores the full post-filter set. A score-stratified panel
+  of 30 jobs is selected once and persisted to `panel_jobs` (frozen `job_snapshot`
+  per job), then rescored verbatim every run — holding job identity constant so score
+  movement is attributable to the model, not job-set churn. 30 divides evenly by every
+  batch size in [1,2,3,5,10].
+- Panel build runs a cheap screening pass (`AZURE_SCREENING_MODEL`) over the full
+  post-filter set for provisional scores used only to stratify into bands (never as
+  experimental data), then seeded round-robin across companies within each band.
+  Screener is currently Kimi-K2.5 — DeepSeek-V4-Flash (the intended screener) is
+  blocked until the subscription leaves Free Tier.
+- Panel seed auto-derives from build date+time (YYYYMMDDHHMMSS, UTC) via `deriveSeed`
+  when `AZURE_PANEL_SEED` is unset; the env var stays an optional override for replay.
+- Build trigger: `panel_jobs` empty → build; non-empty → reuse. No separate flag.
 
 **Hard-won deployment facts — do NOT "simplify" these away (each cost a failed deploy):**
 - The Postgres-principal `deploymentScript` installs the `psql` client with
@@ -97,26 +111,15 @@ framing that used to live here and in §9.
   placeholder-commented reference (`<app-principal>`) in `schema.sql` — reproducible
   guidance without the coupling. If migrations are expected, add `ALTER DEFAULT
   PRIVILEGES IN SCHEMA public GRANT … ON TABLES` so future tables inherit the grants.
-
-**The frontier — bounded next tasks:**
-1. **Blob-backed `ConfigSource`** (the mechanism §9 previously deferred; now
-   decided). In `config_azure.go`, branch on an `AZURE_STORAGE_ACCOUNT` env the same
-   way `wireAzure` branches on a password-bearing DSN: when set (the deployed Job),
-   download config from the `config` container via the managed-identity `cred`; when
-   unset (docker-compose dev loop), keep reading the local `AZURE_CONFIG_DIR` mount
-   unchanged. Only `File` changes; the env-based methods (`Models`, `Temperature`,
-   `BatchSize`, …) stay. `newAzureConfigSource` gains a `cred` param, passed from the
-   one `wireAzure` already builds. Add the `azblob` dependency.
-2. **Wire `AZURE_STORAGE_ACCOUNT`** into the Job env in `containerAppsJob.bicep`,
-   sourced from `storage.outputs.name` in `main.bicep`.
-3. **`ModelConfig` transcription — gated on harvested values (§11).** Once the
+  **`ModelConfig` transcription — has been done (§11).** Once the
    per-model `BaseURL` / `TPM` / `RPM` / deployment / `AuthScope` values exist,
    write them into `defaultAzureModels` (or the `AZURE_MODELS` override) and
    reconcile the model names against what `openai.bicep` actually deploys.
-4. **Stale-comment cleanup:** the `POSTGRES_DSN` note in `containerAppsJob.bicep`
-   claims the Go side has no AAD-token wiring — it does (the `BeforeConnect` hook).
-   The model-list comment in `main.bicepparam` names an outdated set.
-5. **§§4–8 measurement instrument — mostly done; split by gating, NOT one blob.**
+
+**The frontier — bounded next tasks:**
+1. **Wire `AZURE_STORAGE_ACCOUNT`** into the Job env in `containerAppsJob.bicep`,
+   sourced from `storage.outputs.name` in `main.bicep`.
+2. **§§4–8 measurement instrument — mostly done; split by gating, NOT one blob.**
    A code read of the pieces understates how much is wired, so be precise:
    - **Done and wired through `handler()`** (verified by tracing the scoring loop,
      not just the files): the calendar-driven batch-size sweep (run-level), run-level
@@ -140,6 +143,17 @@ framing that used to live here and in §9.
      integer, and that throttle/token-capture behave against real provider response
      shapes. Can't be proven without a real scoring call (needs task 3's deployed
      models).
+3. - **Known gap — per-model run observability (immediate next task):** a full run now
+     executes end-to-end, but the logs predate the multi-model/multi-batch design — no
+     `model` / `batch_size` / per-write row counts — so which models completed calls, and
+     where rows are lost, is not observable from logs. A recent run wrote fewer rows than
+     expected (≈ panel_size × model_count) and the cause can't yet be localized. Structured
+     per-model/per-batch logging + run-start/run-end reconciliation is next.
+    - **Scraping bypass on populated panel (decided, next task):** on the Azure path, a
+     non-empty `panel_jobs` means skip scraping/filtering/seen-set and score the snapshot;
+     scrape runs only to build the panel when empty. One seam in the Azure orchestration;
+     AWS path untouched.
+
 
 > Read code in **execution order** (`main` → `wireAzure` → `handler` →
 > `collect`/`filter`/scorer/store), not file order, and treat "why this instead of
@@ -319,7 +333,11 @@ per model via `ModelConfig.Protocol`:
 - `geminiScorer` — genuinely different shape (AWS incumbent).
 - Additional protocol scorers **only** if a Foundry model exposes a non-OpenAI
   surface (verify — see §9).
-
+> **Near-future protocol expansion (planned):** Tier-1 Foundry access is narrower
+> than the panel assumed (§12), so free-API models from other providers will be
+> added to widen the panel. Some will expose non-OpenAI surfaces and each such
+> surface needs its own protocol scorer. The seam is expected to grow from two
+> protocols toward several — this is the seam working as designed, not a deviation.
 **Consequence:** adding an OpenAI-compatible model is **config only** (a new
 ModelConfig row). Only a genuinely new protocol requires code. `handler()` routes
 to a scorer by the model's `Protocol` tag; the scorer encodes protocol logic,
@@ -440,77 +458,71 @@ only your own month:
 
 ---
 
-## 12. Model panel (selected) & launch-day wiring
+## 12. Model panel (deployed) & the Tier-1 reframe
 
-The candidate selection is **done**; the sheet was scaffolding for it and is not
-needed by the program. What the program needs is per-model operational config.
-Selection rule was objective: **open-weight + current-generation + chat-capable**.
-Capability tiers are deliberately **not** pre-labeled — the capability axis is meant
-to emerge from the collected data, not be asserted up front. Architecture is a
-**recorded tag**, not the selection spine (the current open-weight frontier is
-almost entirely MoE, so a clean Dense-vs-MoE split isn't available). Two
-**within-company, within-generation matched pairs** preserve a partial architecture
-contrast: Gemma-4-31B (Dense) vs Gemma-4-26B-A4B (MoE), and Qwen3.6-27B (Dense) vs
-Qwen3.6-35B-A3B (MoE).
+**What changed from the original selection.** §12 originally specified an
+*open-weight, architecture-contrast* panel (Dense-vs-MoE matched pairs across seven
+providers). **None of that is available on Tier-1 Foundry access.** The models
+actually grantable are 2026 OpenAI models plus a thin set of others. The panel is
+therefore reframed — and the reframe is arguably a *cleaner* instrument than the
+original grab-bag.
 
-### The 12 (build-now prior)
-All are near-certainly **OpenAI-compatible** (`protocol = openai`). This is the
-documented prior to build against; the *instance* values are VERIFY-on-launch (below).
+**Architecture contrast: cut, not parked.** The Dense-vs-MoE matched-pair spine
+(Gemma-4-31B/26B-A4B, Qwen3.6-27B/35B-A3B) is **removed** — the open weights it
+needed aren't provisionable on Tier 1. Do not carry it as aspirational; it is not
+viable in this account and re-adding it would require a different access tier.
 
-| # | Model | Company | Arch | Protocol (prior) | Serving (VERIFY) |
-|---|-------|---------|------|------------------|------------------|
-| 1 | DeepSeek-V4-Pro | DeepSeek | MoE | openai | native or Fireworks |
-| 2 | DeepSeek-V4-Flash | DeepSeek | MoE | openai | native or Fireworks |
-| 3 | Kimi-K2.6 | Moonshot | MoE | openai | native or Fireworks |
-| 4 | Kimi-K2.5 | Moonshot | MoE | openai | native or Fireworks |
-| 5 | MiniMax-M2.5 | MiniMax | MoE | openai | Fireworks (FW-) |
-| 6 | GLM-5.2 | Zhipu | MoE | openai | Fireworks (FW-) |
-| 7 | Nemotron-3-Super-120B-A12B | NVIDIA | MoE | openai | Fireworks (FW-) |
-| 8 | Qwen3.6-35B-A3B | Alibaba | MoE | openai | Fireworks (FW-) |
-| 9 | Qwen3.6-27B | Alibaba | Dense* | openai | Fireworks (FW-) |
-| 10 | Gemma-4-26B-A4B | Google | MoE | openai | Fireworks (FW-) |
-| 11 | Gemma-4-31B | Google | Dense | openai | Fireworks (FW-) |
-| 12 | Qwen3.5-397B-A17B | Alibaba | MoE | openai | Fireworks (FW-) |
+### What the panel measures now
+Instead of a cross-provider architecture contrast, the deployed set forms a
+**within-provider generational + variant sweep** — a tighter design for the study's
+core drift/consistency question, because provider, tokenizer, and API surface are
+held constant while generation and variant vary:
 
-\* Qwen3.6-27B Dense is a moderate-confidence architecture call — verify before
-relying on it as a matched-pair anchor.
+- **Generational axis** (same family, increasing generation): gpt-5.3 → 5.4 → 5.5 → 5.6.
+  Isolates generation with everything else constant — cleaner than the original
+  seven-vendor spread could ever be.
+- **Variant-at-fixed-generation axis:** nano / mini / base / codex within a generation.
+- **Same-generation siblings (the unplanned gift):** gpt-5.6-sol / -luna / -terra,
+  all dated 2026-07-09 — same base generation, different variants. A near-ideal
+  drift/consistency probe: same-generation siblings isolate variant-level divergence
+  more tightly than cross-vendor models ever did.
 
-**Serving path matters even though protocol is the same:** Fireworks-served (`FW-`)
-deployments are OpenAI-compatible but sit at a *different base URL / path* (and
-possibly different auth) than native Foundry deployments. That's exactly why
-`BaseURL` is a per-model `ModelConfig` field (§6), not a global constant. Same
-`protocol` tag, different `BaseURL`.
+### Deployed panel (Tier-1, all 2026, all OpenAI-compatible → protocol = openai)
+| Model | Version | Axis role |
+|-------|---------|-----------|
+| gpt-5.3-codex | 2026-02-24 | codex variant |
+| gpt-5.4-nano  | 2026-03-17 | smallest variant |
+| gpt-5.4-mini  | 2026-03-17 | small variant |
+| gpt-5.4       | 2026-03-05 | generation anchor |
+| gpt-5.5       | 2026-04-24 | generation anchor |
+| gpt-5.6-sol   | 2026-07-09 | 5.6 sibling |
+| gpt-5.6-luna  | 2026-07-09 | 5.6 sibling |
+| gpt-5.6-terra | 2026-07-09 | 5.6 sibling |
 
-### VERIFY-on-launch (these values only exist once the account/deployments exist)
-Per model, fill into the ModelConfig slot that is **already built** pre-launch:
-- `BaseURL` — exact endpoint (native Foundry vs Fireworks path differ)
-- `Deployment` — the deployment string, if the native Azure-OpenAI path is used
-- `TPM` / `RPM` — your assigned per-deployment quotas (drive the §8 throttle)
-- `AuthScope` / credential — confirm the Cognitive Services token scope live
-- The OpenAI-compatible vs native Azure-OpenAI request shape (§7) per deployment
+All share the OpenAI-compatible surface, so **adding any of them was config-only**
+(§7) — no new scorer. `BaseURL` / `Deployment` / `TPM` / `RPM` are per-model
+`ModelConfig` values read from the live deployments.
 
-**Launch day is verification, not construction.** If the build is truly done, day
-one is: provision via Bicep → read back the values above → drop them into config →
-confirm managed-identity auth connects live → shakedown run. Every VERIFY item must
-have its ModelConfig **slot already built** beforehand, so launch day is *fill-in +
-confirm*, never *write code*. Clear the whole day — not for building under credit
-pressure, but because first-contact auth/endpoint/quota reality *will* surprise you
-and you want slack to debug without burning the window.
+### Kimi-K2.5: cut for a quota reason (not budget)
+Kimi-K2.5 was deployed and used for rehearsal, but is **dropped from the panel** —
+its **20K-token-per-request cap** cannot hold the larger batch sizes. §4.5 rescores
+the fixed 30-job panel under *every* batch size in [1,2,3,5,10]; batch=10 (and
+likely batch=5) exceed Kimi's per-request budget. A model that can only run part of
+the sweep produces **holes in the batch-size curve for that model** — a §4.5
+validity gap, not merely a cost inconvenience. Consistency across the full sweep is a
+selection requirement; Kimi fails it. (This also removes the only cross-provider
+anchor — accepted; a complete generational sweep beats an incomplete cross-provider
+point.)
 
-### Closed frontier models (deferred, additive, week-1 gated)
-Closed models (e.g. `gpt-5.x`, `claude-*`) are **not** in the panel now and may be
-added after **week-1 measured cost** shows headroom against the $200 window. Rules:
-- **Additive, never destructive.** Adding closed rows extends the dataset; the
-  architecture analysis simply runs on the known-architecture subset and the closed
-  rows are absent from *that one* graphic. Nothing is removed; no other cut breaks.
-- They are a **cost/capability ceiling reference**, not part of the architecture
-  contrast (architecture = `Closed` for them).
-- **Gate on real data:** extrapolate week-1 cost-per-job to the remaining weeks;
-  one frontier closed model can cost several open ones combined. "A couple OpenAI +
-  an Anthropic" may be one slot's worth of budget — the data decides.
-- Mid-run additions get **fewer days**, so they yield a partial (cost/capability)
-  comparison, not the many-repeat consistency data. Add on the *same panel &
-  conditions* or they aren't comparable.
-- **Anthropic is the one code-touching add:** `claude-*` on Foundry uses the
-  **Messages** API, not OpenAI-compatible — it needs the third protocol scorer
-  (`geminiScorer`/`openaiScorer` → three-way). Budget ~30 min, not a config row.
+### Panel expansion is planned, via free-API models (post-deadline)
+Tier-1 narrowness means the panel is thinner than intended. The plan is to widen it
+later with **free-API models from other providers**, some of which expose non-OpenAI
+surfaces and will need new protocol scorers (§7). This restores cross-provider
+signal without needing a higher Foundry tier. Not a launch-window task.
+
+### Closed frontier / cost gate — now moot for this panel
+The original §12 deferred *closed* models as cost-gated week-1 additions against a
+$200 window. That framing assumed an open-weight base panel; the base panel is now
+itself OpenAI. The 5.5 and three 5.6 variants are the likely per-token-expensive
+rows — watch measured cost there first — but there is no separate "closed additive
+tier" decision anymore; the panel is what's deployed.
