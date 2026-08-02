@@ -65,8 +65,7 @@ framing that used to live here and in §9.
 - Panel build runs a cheap screening pass (`AZURE_SCREENING_MODEL`) over the full
   post-filter set for provisional scores used only to stratify into bands (never as
   experimental data), then seeded round-robin across companies within each band.
-  Screener is currently Kimi-K2.5 — DeepSeek-V4-Flash (the intended screener) is
-  blocked until the subscription leaves Free Tier.
+  Screener is gpt-5.4-mini.
 - Panel seed auto-derives from build date+time (YYYYMMDDHHMMSS, UTC) via `deriveSeed`
   when `AZURE_PANEL_SEED` is unset; the env var stays an optional override for replay.
 - Build trigger: `panel_jobs` empty → build; non-empty → reuse. No separate flag.
@@ -143,16 +142,6 @@ framing that used to live here and in §9.
      integer, and that throttle/token-capture behave against real provider response
      shapes. Can't be proven without a real scoring call (needs task 3's deployed
      models).
-3. - **Known gap — per-model run observability (immediate next task):** a full run now
-     executes end-to-end, but the logs predate the multi-model/multi-batch design — no
-     `model` / `batch_size` / per-write row counts — so which models completed calls, and
-     where rows are lost, is not observable from logs. A recent run wrote fewer rows than
-     expected (≈ panel_size × model_count) and the cause can't yet be localized. Structured
-     per-model/per-batch logging + run-start/run-end reconciliation is next.
-    - **Scraping bypass on populated panel (decided, next task):** on the Azure path, a
-     non-empty `panel_jobs` means skip scraping/filtering/seen-set and score the snapshot;
-     scrape runs only to build the panel when empty. One seam in the Azure orchestration;
-     AWS path untouched.
 
 
 > Read code in **execution order** (`main` → `wireAzure` → `handler` →
@@ -274,7 +263,9 @@ models within a run — **not** a `ModelConfig` field. Same rule as batch size (
 a variable compared across models must be held constant across the comparison, or
 model-vs-temperature is confounded and unidentifiable. If temperature is swept, it
 is applied **uniformly to every model on a given run** and varied *across* runs, not
-between models within one run.
+between models within one run. If no `TEMPERATURE` env value is set, then the default
+is set to 1. This is because gpt-5.6 and gpt-5.5 models do not support a temperature 
+value of 0 and their default value is 1.
 
 Code requirements:
 - Read one temperature per run; apply to every model's scoring request.
