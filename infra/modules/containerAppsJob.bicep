@@ -47,7 +47,7 @@ param postgresAppPrincipalName string
 param cronSchedule string = '0 13 * * *'
 
 @description('Deploy-time contributor identity token; injected by bootstrap.sh')
-param contributorId string = 'UNSET'
+param contributorId string
 
 var baseEnv = [
   {
