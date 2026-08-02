@@ -8,8 +8,9 @@ set -euo pipefail
 RG="${RG:-jobfinder-rg}"
 ADMIN_OID=$(az ad signed-in-user show --query id -o tsv)
 ADMIN_UPN=$(az ad signed-in-user show --query userPrincipalName -o tsv)
+CONTRIBUTOR_ID=$(printf '%s' "$ADMIN_UPN" | sha256sum | cut -c1-12)
 #Deploying the bicep initially to ACR. 
-az deployment group create -g "$RG" -f ./infra/main.bicep -p ./infra/main.bicepparam -p postgresAdminObjectId="$ADMIN_OID" -p postgresAdminPrincipalName="$ADMIN_UPN"
+az deployment group create -g "$RG" -f ./infra/main.bicep -p ./infra/main.bicepparam -p postgresAdminObjectId="$ADMIN_OID" -p postgresAdminPrincipalName="$ADMIN_UPN" -p contributorId="$CONTRIBUTOR_ID"
 
 ACR_LOGIN=$(az acr list -g "$RG" --query "[0].loginServer" -o tsv)
 ACR=$(az acr list -g "$RG" --query "[0].name" -o tsv)

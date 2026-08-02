@@ -46,12 +46,15 @@ param postgresAppPrincipalName string
 @description('Cron schedule for the daily run - matches AWS template.yaml\'s cron(0 13 * * ? *) UTC time.')
 param cronSchedule string = '0 13 * * *'
 
+@description('Deploy-time contributor identity token; injected by bootstrap.sh')
+param contributorId string = 'UNSET'
+
 var baseEnv = [
   {
   // ID for user, specifically for data-evaluation purposes
   // set to "test" currently for trial cron run
   name: 'AZURE_CONTRIBUTOR_ID'
-  value: 'test'
+  value: contributorId
   }
   // resume_id and config_id are no longer env-set: both are content hashes
   // computed at wire time from instructions.md / sources.json /
