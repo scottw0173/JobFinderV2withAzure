@@ -214,80 +214,115 @@ func wireAzure(ctx context.Context, app *App) error {
 }
 
 func handler(ctx context.Context) error {
-	all, err := collect(ctx, app)
-	if err != nil {
-		wrapped := wrapErr("error collecting jobs", err)
-		app.Logger.Error("cannot collect jobs", errAttr(wrapped))
-		return wrapped
-	}
-
-	seenJobs, err := app.Store.SeenJobs(ctx)
-	if err != nil {
-		app.Logger.Error("cannot read results from store", errAttr(err))
-	}
-	seenSet := seenJobKeySet(seenJobs)
-	var fresh []Job
-	app.Logger.Debug("checking again seen set begins", "time", time.Now())
-	for _, job := range all {
-		if !seenSet[job.createCompositeKey()] {
-			fresh = append(fresh, job)
-		}
-	}
-	liveKeys := make(map[string]struct{}, len(all))
-	for _, job := range all {
-		liveKeys[job.createCompositeKey()] = struct{}{}
-	}
-	now := time.Now()
-	cutoff := now.Add(-48 * time.Hour)
-	var toBump, aged []SeenJob
-	for _, item := range seenJobs {
-		if _, live := liveKeys[item.compositeKey()]; live {
-			toBump = append(toBump, item)
-		} else if item.LastSeen.Before(cutoff) && !item.HasApplied {
-			aged = append(aged, item)
-		}
-	}
-	app.Logger.Info("updating 'last_seen' for active entries", "count", len(toBump))
-	if err := app.Store.BumpLastSeen(ctx, toBump, now); err != nil {
-		app.Logger.Error("cannot update last seen", errAttr(err))
-	}
-	app.Logger.Info("deleting aged out entries", "count", len(aged))
-	if _, err := app.Store.DeleteAged(ctx, aged); err != nil {
-		app.Logger.Error("cannot delete aged entries", errAttr(err))
-	}
-	app.Logger.Debug("checking again seen set ends", "time", time.Now())
-
-	filter, err := LoadKeywordFilter(ctx, app)
-	if err != nil {
-		wrapped := wrapErr("error loading filter file", err)
-		app.Logger.Error("cannot load filtering data ", errAttr(wrapped))
-		return wrapped
-	}
-
-	// Rescore policy is configuration, not forked code: AWS skips jobs it has
-	// already scored (fresh only); Azure re-scores every currently-live job
-	// each run to measure cross-model/temporal drift.
-	candidates := fresh
-	if app.Config.RescoreEveryRun() {
-		candidates = all
-	}
-	matched := filterJobs(candidates, filter)
-	app.Logger.Info("matched jobs", "count", len(matched))
-
 	// Fixed score-stratified 30-job panel (CLAUDE.md): scoring the same
 	// curated set every run, instead of the full post-filter set fresh each
 	// time, lets score drift over the measurement window be attributed to
 	// the model rather than to job-set churn. Azure-only; AWS's PanelEnabled
-	// is hardcoded false, so this branch never executes there.
-	if app.cloudProvider == "azure" && app.Config.PanelEnabled() {
-		panelJobs, err := loadOrBuildPanel(ctx, app, matched)
+	// is hardcoded false, so usePanel is always false there.
+	usePanel := app.cloudProvider == "azure" && app.Config.PanelEnabled()
+
+	// panelSize stays at the sentinel -1 ("panel disabled") unless a panel
+	// branch below actually runs - never conflated with a legitimately empty
+	// panel (CLAUDE.md observability task: "rows actually read from panel_jobs").
+	panelSize := -1
+	var matched []Job
+
+	// Scraping bypass (CLAUDE.md §2): a non-empty panel_jobs means the
+	// scrape/seen-set/filter stages below have nothing to contribute this
+	// run - the panel is frozen and rescored verbatim every run. Checked
+	// before collect() so the bypass actually saves the ATS calls, not just
+	// the panel build.
+	if usePanel && !app.Config.RebuildPanel() {
+		pinned := app.Config.ActivePanelID()
+		loaded, resolvedID, ok, err := app.Store.ActivePanel(ctx, pinned)
 		if err != nil {
-			wrapped := wrapErr("error resolving job panel", err)
+			wrapped := wrapErr("error resolving active panel", err)
 			app.Logger.Error("cannot resolve panel", errAttr(wrapped))
 			return wrapped
 		}
-		matched = panelJobs
-		app.Logger.Info("using fixed panel for scoring", "count", len(matched))
+		if ok {
+			app.Logger.Info("panel_jobs populated, skipping scrape/filter/seen-set",
+				"panel_id", resolvedID, "count", len(loaded))
+			matched = loaded
+			panelSize = len(matched)
+		} else if pinned != "" {
+			return traceErrorf("AZURE_ACTIVE_PANEL_ID %q pins a panel that does not exist", pinned)
+		}
+		// ok==false, pinned=="": no panel yet - fall through and build one.
+	}
+
+	if matched == nil {
+		all, err := collect(ctx, app)
+		if err != nil {
+			wrapped := wrapErr("error collecting jobs", err)
+			app.Logger.Error("cannot collect jobs", errAttr(wrapped))
+			return wrapped
+		}
+
+		seenJobs, err := app.Store.SeenJobs(ctx)
+		if err != nil {
+			app.Logger.Error("cannot read results from store", errAttr(err))
+		}
+		seenSet := seenJobKeySet(seenJobs)
+		var fresh []Job
+		app.Logger.Debug("checking again seen set begins", "time", time.Now())
+		for _, job := range all {
+			if !seenSet[job.createCompositeKey()] {
+				fresh = append(fresh, job)
+			}
+		}
+		liveKeys := make(map[string]struct{}, len(all))
+		for _, job := range all {
+			liveKeys[job.createCompositeKey()] = struct{}{}
+		}
+		now := time.Now()
+		cutoff := now.Add(-48 * time.Hour)
+		var toBump, aged []SeenJob
+		for _, item := range seenJobs {
+			if _, live := liveKeys[item.compositeKey()]; live {
+				toBump = append(toBump, item)
+			} else if item.LastSeen.Before(cutoff) && !item.HasApplied {
+				aged = append(aged, item)
+			}
+		}
+		app.Logger.Info("updating 'last_seen' for active entries", "count", len(toBump))
+		if err := app.Store.BumpLastSeen(ctx, toBump, now); err != nil {
+			app.Logger.Error("cannot update last seen", errAttr(err))
+		}
+		app.Logger.Info("deleting aged out entries", "count", len(aged))
+		if _, err := app.Store.DeleteAged(ctx, aged); err != nil {
+			app.Logger.Error("cannot delete aged entries", errAttr(err))
+		}
+		app.Logger.Debug("checking again seen set ends", "time", time.Now())
+
+		filter, err := LoadKeywordFilter(ctx, app)
+		if err != nil {
+			wrapped := wrapErr("error loading filter file", err)
+			app.Logger.Error("cannot load filtering data ", errAttr(wrapped))
+			return wrapped
+		}
+
+		// Rescore policy is configuration, not forked code: AWS skips jobs it
+		// has already scored (fresh only); Azure re-scores every
+		// currently-live job each run to measure cross-model/temporal drift.
+		candidates := fresh
+		if app.Config.RescoreEveryRun() {
+			candidates = all
+		}
+		matched = filterJobs(candidates, filter)
+		app.Logger.Info("matched jobs", "count", len(matched))
+
+		if usePanel {
+			panelJobs, err := loadOrBuildPanel(ctx, app, matched)
+			if err != nil {
+				wrapped := wrapErr("error resolving job panel", err)
+				app.Logger.Error("cannot resolve panel", errAttr(wrapped))
+				return wrapped
+			}
+			matched = panelJobs
+			panelSize = len(matched)
+			app.Logger.Info("using fixed panel for scoring", "count", len(matched))
+		}
 	}
 
 	models, err := app.Config.Models(ctx)
@@ -300,7 +335,8 @@ func handler(ctx context.Context) error {
 	// Only "main" is wired end to end (CLAUDE.md §2); refuse anything else
 	// fast rather than silently producing main-shaped data mislabeled as a
 	// mode ("floor") that has no repeat-scoring logic behind it yet.
-	if mode := app.Config.RunMode(); mode != "main" {
+	mode := app.Config.RunMode()
+	if mode != "main" {
 		return traceErrorf("run mode %q not implemented (only \"main\" is wired; floor is a later edition)", mode)
 	}
 
@@ -325,6 +361,13 @@ func handler(ctx context.Context) error {
 			return traceErrorf("missing contributor/resume/config identity - set AZURE_CONTRIBUTOR_ID, AZURE_RESUME_ID, AZURE_CONFIG_ID (CLAUDE.md §10)")
 		}
 	}
+
+	// One line marking the start of the scoring sweep with every top-level
+	// run condition (CLAUDE.md observability task) - lets Log Analytics
+	// answer "what was this run configured to do" before diving into
+	// per-batch/per-call detail below.
+	app.Logger.Info("run start",
+		"panel_size", panelSize, "batch_size", batchSize, "model_count", len(models), "run_kind", mode)
 
 	var events []ScoringEvent
 	for _, model := range models {
@@ -364,6 +407,8 @@ func handler(ctx context.Context) error {
 		for i := 0; i < len(matched); i += batchSize {
 			<-limiter.C // RPM limiter
 			end := min(i+batchSize, len(matched))
+			batchIndex := i / batchSize
+			jobsSent := end - i
 
 			tokenEstimate := 3000.0 // initial for estimated prompt/resume tokens
 			var descChars int
@@ -375,30 +420,46 @@ func handler(ctx context.Context) error {
 			if err := throttle.reserve(ctx, tokenEstimate); err != nil {
 				break
 			}
-			results, usage, err := app.scoreBatchRetry(ctx, scorer, matched[i:end], model, temperature)
+			results, usage, err := app.scoreBatchRetry(ctx, scorer, matched[i:end], model, temperature, batchIndex)
 			if err != nil {
-				app.Logger.Error("aborting run, batch failed", "start", i, "model", model.Name, errAttr(err))
+				app.Logger.Error("scoring batch failed",
+					"model", model.Name, "batch_index", batchIndex, "batch_size", batchSize,
+					"jobs_sent", jobsSent, "scores_parsed", 0, "outcome", "failed",
+					"error_class", errorClass(err), errAttr(err))
 				break
 			}
-			if usage.Total > 0 {
-				app.Logger.Info("token estimate calibration",
-					"est", tokenEstimate,
-					"actual_total", usage.Total,
-					"length of descriptions", descChars,
-					"chars_per_token", float64(descChars)/usage.Total,
-					"est_ratio", tokenEstimate/usage.Total)
-			} else {
-				app.Logger.Warn("zero token count on success path- skipping calibration", "start", i)
+
+			// One consolidated line per batch (not three) - jobs_sent vs
+			// scores_parsed surfaces a batch that returned short/malformed
+			// JSON and silently dropped rows; the calibration fields
+			// (est/actual_total/est_ratio) ride along only when the provider
+			// actually reported usage, same condition the old two-branch
+			// calibration/warn logging used.
+			scoresParsed := len(results)
+			outcome := "ok"
+			if scoresParsed < jobsSent {
+				outcome = "partial"
 			}
+			logArgs := []any{
+				"model", model.Name, "batch_index", batchIndex, "batch_size", batchSize,
+				"jobs_sent", jobsSent, "scores_parsed", scoresParsed, "outcome", outcome,
+			}
+			if usage.Total > 0 {
+				logArgs = append(logArgs,
+					"est", tokenEstimate, "actual_total", usage.Total, "est_ratio", tokenEstimate/usage.Total)
+			}
+			app.Logger.Info("scoring batch complete", logArgs...)
+
 			throttle.record(usage.Total)
-			events = append(events, zipScoreEvents(app, matched[i:end], results)...)
+			events = append(events, zipScoreEvents(app, matched[i:end], results, batchIndex)...)
 		}
 		limiter.Stop()
 	}
+	// RecordScores itself logs the real accounting (per-call persisted rows,
+	// destination tables, and a run-end expected/actual/per-model tally) -
+	// see store_azure.go. This is just the pass/fail signal at the call site.
 	if err := app.Store.RecordScores(ctx, events, contributorID, resumeID, configID, app.InstructionsVersion); err != nil {
-		app.Logger.Error("cannot write results to store", errAttr(err))
-	} else {
-		app.Logger.Info("results successfully written to store")
+		app.Logger.Error("store phase had failures", errAttr(err))
 	}
 	rows, err := app.Store.ExportRows(ctx)
 	if err != nil {

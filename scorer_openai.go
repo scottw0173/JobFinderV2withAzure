@@ -36,18 +36,6 @@ func newOpenAIScorer(logger *slog.Logger, client *http.Client, apiKey string, cr
 	return &openaiScorer{logger: logger, client: client, apiKey: apiKey, cred: cred, instructions: instructions}
 }
 
-// scoreFormatOverride re-expresses instructions.md's inherited "0 to 10
-// integer" OUTPUT convention (shared prose, not code) on the 0-100 float
-// scale CLAUDE.md wants for the Azure measurement instrument. Layered onto
-// the request rather than editing instructions.md, which is per-candidate
-// user content, not code.
-const scoreFormatOverride = `
-
-FORMAT OVERRIDE (applies over any scale mentioned above): express the final
-score as a number from 0 to 100, not 0 to 10. Convert proportionally (a
-7-out-of-10 judgment becomes 70) - do not invent precision the rubric above
-doesn't support; one decimal place is the most you should ever need.`
-
 type chatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -182,7 +170,7 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 	reqBody := chatCompletionRequest{
 		Model: model.Name,
 		Messages: []chatMessage{
-			{Role: "system", Content: string(s.instructions) + scoreFormatOverride},
+			{Role: "system", Content: string(s.instructions)},
 			{Role: "user", Content: "Jobs to score:\n" + string(jobsJSON)},
 		},
 		Temperature: temperature, // run-level (CLAUDE.md §4.7), not per-model - set via AZURE_TEMPERATURE

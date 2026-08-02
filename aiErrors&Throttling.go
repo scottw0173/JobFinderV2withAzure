@@ -103,7 +103,35 @@ func classify(err error) bool {
 	}
 }
 
-func (a *App) scoreBatchRetry(ctx context.Context, scorer Scorer, batch []Job, model ModelConfig, temperature float32) ([]ScoreResult, Usage, error) {
+// errorClass renders err as a short symbolic category for the "error_class"
+// log field - never the full message/stack (that's errAttr's job) - so
+// KQL can group failures by kind without parsing free text.
+func errorClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	var se *statusError
+	if errors.As(err, &se) {
+		switch {
+		case se.code >= 500:
+			return "http_5xx"
+		case se.code >= 400:
+			return "http_4xx"
+		default:
+			return "http_other"
+		}
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "unknown"
+	}
+}
+
+func (a *App) scoreBatchRetry(ctx context.Context, scorer Scorer, batch []Job, model ModelConfig, temperature float32, batchIndex int) ([]ScoreResult, Usage, error) {
 	const maxAttempts = 3
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		res, usage, err := scorer.ScoreBatch(ctx, batch, model, temperature)
@@ -118,7 +146,9 @@ func (a *App) scoreBatchRetry(ctx context.Context, scorer Scorer, batch []Job, m
 			wait = 60 * time.Second
 		}
 		wait += time.Duration(rand.Int63n(int64(time.Second)))
-		a.Logger.Warn("retrying batch", "attempt", attempt+1, "wait", wait, "err", err)
+		a.Logger.Warn("retrying batch",
+			"model", model.Name, "batch_index", batchIndex, "batch_size", len(batch),
+			"attempt", attempt+1, "wait", wait, "error_class", errorClass(err), "err", err)
 		select {
 		case <-ctx.Done():
 			return nil, Usage{}, ctx.Err()

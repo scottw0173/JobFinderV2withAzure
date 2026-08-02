@@ -133,7 +133,7 @@ func (c *azureConfigSource) Temperature() float32 {
 			return float32(v)
 		}
 	}
-	return 0
+	return 1
 }
 
 // azureSweepStartLayout matches AZURE_SWEEP_START's expected form, e.g. "2026-07-21".

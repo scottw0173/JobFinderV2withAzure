@@ -60,8 +60,10 @@ type ScoreResult struct {
 
 // zipScoreEvents joins jobs with their scoring results by JobKey. A job with
 // no matching result (the provider dropped it) is logged and skipped rather
-// than producing a zero-value event.
-func zipScoreEvents(a *App, jobs []Job, results []ScoreResult) []ScoringEvent {
+// than producing a zero-value event. batchIndex is stamped onto every event
+// so the run's persistence log (store_azure.go) can be correlated back to the
+// scoring-time log for the same batch.
+func zipScoreEvents(a *App, jobs []Job, results []ScoreResult, batchIndex int) []ScoringEvent {
 	byKey := make(map[string]ScoreResult, len(results))
 	for _, r := range results {
 		byKey[r.JobKey] = r
@@ -73,7 +75,7 @@ func zipScoreEvents(a *App, jobs []Job, results []ScoreResult) []ScoringEvent {
 			a.Logger.Warn("no score returned for job", "key", j.Key)
 			continue
 		}
-		events = append(events, ScoringEvent{Job: j, Result: r})
+		events = append(events, ScoringEvent{Job: j, Result: r, BatchIndex: batchIndex})
 	}
 	return events
 }

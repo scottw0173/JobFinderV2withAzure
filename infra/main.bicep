@@ -9,7 +9,7 @@ param namePrefix string
 @description('Azure region for most resources. Must carry the target Azure OpenAI/Foundry model catalog - verify against the live catalog before deployment.')
 param location string = resourceGroup().location
 
-@description('Full container image reference to deploy. No CI/CD pushes it yet (out of scope for this step) - defaults to a tag under the provisioned ACR that must be pushed manually.')
+@description('Full pinned image reference, digest-preferred: <registry>/jobfinder@sha256:<digest>')
 param containerImage string = ''
 
 @description('Entra object ID of the human/service principal to register as Postgres AAD administrator.')
@@ -145,7 +145,7 @@ module containerAppsJob 'modules/containerAppsJob.bicep' = {
     uamiId: jobIdentity.outputs.id
     uamiClientId: jobIdentity.outputs.clientId
     acrLoginServer: registry.outputs.loginServer
-    containerImage: empty(containerImage) ? '${registry.outputs.loginServer}/jobfinder:latest' : containerImage
+    containerImage:  empty(containerImage) ? '${registry.outputs.loginServer}/jobfinder:latest' : containerImage
     openAiEndpoint: openai.outputs.endpoint
     storageAccountName: storage.outputs.name
     azureModelsJson: azureModelsJson
