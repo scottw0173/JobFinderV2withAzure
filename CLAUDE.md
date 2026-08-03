@@ -314,6 +314,43 @@ but the operating point *changed*: any pre-move rehearsal data was taken at a
 different temperature and is not comparable across that boundary — treat the move as a
 run-condition change, not a no-op.
 
+### 4.8 Malformed/unattributed scoring results — sentinel `emitted_score = -2`
+
+**VERSIONED CONSTANT — v1.** When a scoring response item can't be
+correlated to any job in its batch — either its JSON failed to unmarshal at
+all, or it unmarshaled fine but its `key` didn't match any job's `Key` in the
+batch (typo/truncation/hallucination) — persist a **sentinel
+`scoring_events` row** rather than silently dropping it. The failure is
+itself data about the model's behavior and must not be lost.
+
+- **`emitted_score = -2`** (`malformedKeyEmittedScore` in `scorer.go`) —
+  outside the valid 0-100 rubric range and distinct from a legitimate score
+  of 0, so it can never be confused with real model output. Changing this
+  value is a breaking change for anyone querying on it and requires a
+  **v2** (a new constant/value, documented as such), not an in-place edit.
+- **`composite_key`** always comes from the request-side `Job` this row is
+  paired with, via the same `createCompositeKey()` every other row uses
+  (`store_azure.go`'s `recordEvent`) — **never** parsed out of the
+  malformed response, so it always references a real, known posting.
+- **`ev_score` is always `NULL`** on a sentinel row, even if a stray EV
+  computation happened to succeed against a hallucinated/mismatched key — a
+  number computed against an already-untrustworthy key carries no signal
+  and would contaminate the EV column's provenance guarantee (§4.6).
+- **`raw`** is the actual verbatim raw bytes of the malformed item as
+  returned by the model, never a synthesized status object.
+- **Best-effort positional pairing, not identity-verified:** when a batch
+  has more than one unmatched job and more than one leftover
+  malformed/unattributed result simultaneously, `zipScoreEvents`
+  (`scorer.go`) pairs them positionally, in original order — there is no
+  stronger correlation available once a key is unusable. This risks
+  mis-attributing which raw payload lands on which job if the provider
+  didn't preserve response order for its failed items. Chosen deliberately
+  over only pairing exact, unambiguous 1:1 cases: surfacing the failure
+  (even imperfectly attributed) is more valuable here than dropping it,
+  mirroring `bestEffortScoreEV`'s "best-effort, never required" idiom
+  (§4.6). A job that's genuinely missing from the response with no
+  leftover result to pair with is still logged and dropped, unchanged.
+
 ---
 
 ## 5. Capture grain (analysis is out of scope for this program)

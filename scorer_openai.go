@@ -255,24 +255,47 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 	logprobs := cr.Choices[0].Logprobs
 	usage := parseOpenAIUsage(cr.Usage)
 	now := time.Now()
+
+	// Same batch-level logprobs blob is stored verbatim on every result in
+	// this batch (see bestEffortScoreEV doc comment) - "store raw" is
+	// satisfied even though it's duplicated per row. Computed once, outside
+	// the loop, since it doesn't depend on whether a given item parses.
+	var lp json.RawMessage
+	if model.WantLogprobs && len(logprobs) > 0 {
+		lp = logprobs
+	}
+
 	out := make([]ScoreResult, 0, len(envelope.Results))
-	for _, raw := range envelope.Results {
+	for idx, raw := range envelope.Results {
 		var item openaiScoreItem
 		if err := json.Unmarshal(raw, &item); err != nil {
-			// Per-item, not batch-fatal: zipScoreEvents already logs+skips
-			// any job with no matching JobKey, so dropping here just routes
-			// into that existing path.
-			s.logger.Warn("dropping malformed score item", errAttr(wrapErr("unmarshal score item", err)))
+			// Per-item, not batch-fatal, but no longer dropped: the key is
+			// unrecoverable here, but the raw bytes are real data about the
+			// model's behavior (CLAUDE.md §4.8) and zipScoreEvents will
+			// best-effort-pair this unattributed result with a job that got
+			// no exact key match, persisting a malformedKeyEmittedScore
+			// sentinel row rather than losing it.
+			s.logger.Warn("malformed score item in scoring response; routing to best-effort correlation",
+				slog.Int("item_index", idx), slog.String("model", model.Name),
+				errAttr(wrapErr("unmarshal score item", err)))
+			out = append(out, ScoreResult{
+				JobKey:       "", // sentinel: real Job.Key always ends in a timestamp digit (greenhouse.go/ashby.go/lever.go), never empty
+				Model:        model.Name,
+				Deployment:   model.Deployment,
+				EmittedScore: malformedKeyEmittedScore, // zipScoreEvents is the authoritative enforcement point; matches its own override
+				EVScore:      nil,                      // never attempted - no parsed item.Key/item.Score to search content for
+				Usage:        usage,
+				Reasoning:    salvageReasoning(raw),
+				Raw:          raw, // verbatim malformed bytes - never synthesized
+				Logprobs:     lp,
+				ScoredAt:     now,
+				Temperature:  float64(temperature),
+			})
 			continue
 		}
 
 		var evScore *float64
-		var lp json.RawMessage
 		if model.WantLogprobs && len(logprobs) > 0 {
-			// Same batch-level logprobs blob is stored verbatim on every
-			// result in this batch (see bestEffortScoreEV doc comment) -
-			// "store raw" is satisfied even though it's duplicated per row.
-			lp = logprobs
 			if ev, ok := bestEffortScoreEV(cr.Choices[0].Message.Content, logprobs, item.Key, item.Score); ok {
 				evScore = &ev
 			}
@@ -293,6 +316,22 @@ func (s *openaiScorer) ScoreBatch(ctx context.Context, jobs []Job, model ModelCo
 		})
 	}
 	return out, usage, nil
+}
+
+// salvageReasoning attempts a lenient secondary parse of a malformed score
+// item, pulling out only "reasoning" if present and typed as a string -
+// independent of whatever else made the item fail its strict
+// openaiScoreItem unmarshal (e.g. "score" sent as a string, "key" missing).
+// Returns "" (never an error) when nothing is salvageable; recordEvent's
+// nil-if-empty idiom (store_azure.go) turns that into SQL NULL, not "".
+func salvageReasoning(raw json.RawMessage) string {
+	var partial struct {
+		Reasoning string `json:"reasoning"`
+	}
+	if err := json.Unmarshal(raw, &partial); err != nil {
+		return ""
+	}
+	return partial.Reasoning
 }
 
 // authHeaderValue resolves this request's Authorization header: token-based

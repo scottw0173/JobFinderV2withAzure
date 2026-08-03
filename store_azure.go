@@ -203,13 +203,21 @@ func (s *azureStore) recordEvent(ctx context.Context, tx pgx.Tx, callID int64, e
 		logprobs = string(e.Result.Logprobs)
 	} // else leave nil -> SQL NULL
 
+	var reasoning any
+	if e.Result.Reasoning != "" {
+		reasoning = e.Result.Reasoning
+	} // else leave nil -> SQL NULL (ScoreResult.Reasoning is a plain Go
+	// string; scoring_events.reasoning is nullable TEXT - this closes that
+	// gap, and matters most for sentinel rows, CLAUDE.md §4.8, where an
+	// unsalvageable reasoning must land as NULL, not "").
+
 	// EVScore is *float64, nil when the EV path didn't fire (CLAUDE.md
 	// §4.6) - pgx passes a nil pointer through as SQL NULL directly, which
 	// is exactly the provenance signal ev_score is meant to carry.
 	_, err = tx.Exec(ctx, `
 		INSERT INTO scoring_events (call_id, composite_key, emitted_score, ev_score, reasoning, raw, logprobs)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, callID, compositeKey, e.Result.EmittedScore, e.Result.EVScore, e.Result.Reasoning, string(e.Result.Raw), logprobs)
+	`, callID, compositeKey, e.Result.EmittedScore, e.Result.EVScore, reasoning, string(e.Result.Raw), logprobs)
 	return wrapErrIfSet("insert scoring_events row", err)
 }
 

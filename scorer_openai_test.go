@@ -241,6 +241,53 @@ func TestBestEffortScoreEV(t *testing.T) {
 	}
 }
 
+// TestSalvageReasoning is a pure-logic test (no network) covering the
+// best-effort reasoning extraction used for malformed score items
+// (CLAUDE.md §4.8): salvage must succeed independent of whatever else made
+// the item fail its strict openaiScoreItem unmarshal.
+func TestSalvageReasoning(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "reasoning present as string",
+			raw:  `{"key":"a","score":50,"reasoning":"good fit"}`,
+			want: "good fit",
+		},
+		{
+			name: "reasoning missing",
+			raw:  `{"key":"a","score":50}`,
+			want: "",
+		},
+		{
+			name: "reasoning typed as a number",
+			raw:  `{"key":"a","score":50,"reasoning":42}`,
+			want: "",
+		},
+		{
+			name: "syntactically invalid JSON",
+			raw:  `{"key":"a","score":`,
+			want: "",
+		},
+		{
+			name: "score wrong type alongside valid reasoning still salvages reasoning",
+			raw:  `{"key":"a","score":"N/A","reasoning":"salvaged anyway"}`,
+			want: "salvaged anyway",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := salvageReasoning(json.RawMessage(tt.raw))
+			if got != tt.want {
+				t.Errorf("salvageReasoning(%s) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func int64p(v int64) *int64 { return &v }
 
 // TestParseOpenAIUsage is a pure-logic test (no network) covering CLAUDE.md
