@@ -13,6 +13,10 @@ param storageAccountId string
 @description('Resource ID of the Cognitive Services / AI Foundry account.')
 param openAiAccountIds array
 
+@description('Name of the user-assigned managed identity used by GitHub Actions CI (created in ci-oidc.bicep). Looked up as existing to read its principalId for the AcrPush role assignment.')
+param ciUamiName string = 'jf-dev-ci-uami'
+
+
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var storageBlobDataReaderRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
@@ -25,6 +29,17 @@ var cognitiveServicesOpenAiUserRoleId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: last(split(acrId, '/'))
+}
+resource ciUami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = { name: ciUamiName }
+
+resource push 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: acr
+  name: guid(acr.id, ciUami.id, '8311e382-0749-4cb8-b61a-304f252e45ec')
+  properties: {
+    principalId: ciUami.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8311e382-0749-4cb8-b61a-304f252e45ec')
+  }
 }
 
 resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
