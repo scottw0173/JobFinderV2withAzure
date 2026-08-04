@@ -24,3 +24,8 @@ jobs:
           SHORT=$(git rev-parse --short HEAD)
           IMG=${{ vars.ACR_NAME }}.azurecr.io/jobfinder:$SHORT
           docker build --platform linux/amd64 -t "$IMG" . && docker push "$IMG"
+      - run: |
+          SHORT=$(git rev-parse --short HEAD)  
+          az containerapp job update \
+            -n ${{ vars.JOB_NAME }} -g ${{ vars.RG_NAME }} \
+            --image ${{ vars.ACR_NAME }}.azurecr.io/jobfinder:$SHORT
