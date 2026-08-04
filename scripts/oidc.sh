@@ -15,5 +15,5 @@ echo "Deploying CI OIDC for ${owner}/${repo} into ${RG}"
 
 az deployment group create \
   -g "$RG" \
-  -f ./infra/modules/ci-oidc.bicep \
+  -f ./infra/ci-oidc.bicep \
   -p githubOwner="$owner" githubRepo="$repo"

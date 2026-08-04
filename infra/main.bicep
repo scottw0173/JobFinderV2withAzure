@@ -170,6 +170,7 @@ module rbac 'modules/rbac.bicep' = {
     keyVaultId: keyVault.outputs.id
     storageAccountId: storage.outputs.id
     openAiAccountIds: union([openai.outputs.id], extraOpenAiAccountIds)
+    jobName: '${namePrefix}-job'
   }
 }
 

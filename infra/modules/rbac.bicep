@@ -16,6 +16,8 @@ param openAiAccountIds array
 @description('Name of the user-assigned managed identity used by GitHub Actions CI (created in ci-oidc.bicep). Looked up as existing to read its principalId for the AcrPush role assignment.')
 param ciUamiName string = 'jf-dev-ci-uami'
 
+@description('Name of the Container Apps Job.')
+param jobName string
 
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
@@ -31,6 +33,32 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: last(split(acrId, '/'))
 }
 resource ciUami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = { name: ciUamiName }
+
+resource job 'Microsoft.App/jobs@2024-03-01' existing = {
+  name: jobName
+}
+
+resource jobWriter 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(job.id, 'ci-job-writer')
+  properties: {
+    roleName: 'JF CI Job Image Updater (${jobName})'
+    assignableScopes: [ job.id ]
+    permissions: [ { actions: [
+      'Microsoft.App/jobs/read'
+      'Microsoft.App/jobs/write'
+    ] } ]
+  }
+}
+
+resource jobWrite 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: job
+  name: guid(job.id, ciUami.id, jobWriter.id)
+  properties: {
+    principalId: ciUami.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: jobWriter.id
+  }
+}
 
 resource push 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: acr
