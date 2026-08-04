@@ -3,6 +3,10 @@ param location string = resourceGroup().location
 param githubOwner string          // These values will be set by a
 param githubRepo string           // manual deployment of oidc.sh
 param githubRef string = 'refs/heads/main'
+@description('GitHub org/user numeric ID (immutable). Derived in oidc.sh via gh api.')
+param githubOwnerId string
+@description('GitHub repo numeric ID (immutable). Derived in oidc.sh via gh api.')
+param githubRepoId string
 
 resource ciUami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'jf-dev-ci-uami'
@@ -13,7 +17,7 @@ resource fed 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentity
   name: 'github-actions-main'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${githubOwner}/${githubRepo}:ref:${githubRef}'
+    subject: 'repo:${githubOwner}@${githubOwnerId}/${githubRepo}@${githubRepoId}:ref:${githubRef}'
     audiences: [ 'api://AzureADTokenExchange' ]
   }
 }
