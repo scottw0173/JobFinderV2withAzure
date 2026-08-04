@@ -145,24 +145,51 @@ framing that used to live here and in §9.
      silently falling back to the emitted integer, and that throttle/token-capture
      behave against real provider response shapes. The panel is deployed, so this is
      now checkable on a real run.
-2. **Deploy/image lifecycle & bootstrap (this branch, `ci/image-lifecycle-bootstrap`).**
-   Harden the build/deploy loop that has cost repeated manual troubleshooting, so it
+
+
+
+  **Deploy/image lifecycle & bootstrap (this branch, `ci/image-lifecycle-bootstrap`).**
+   Hardened the build/deploy loop that has cost repeated manual troubleshooting, so it
    stops eating time before data collection is live. Tracked on the ClickUp board of
    the same name; the pieces:
-   - **CI workflow:** image build + push + Job-update only (SHA-tagged), with **no
-     infra/RBAC creds in that path** — kept separate from the infra deploy because
-     image push needs only `AcrPush`, not `Microsoft.Authorization/roleAssignments/write`.
-   - **OIDC, both halves:** a federated credential scoped to `AcrPush` (Azure side:
-     app registration + federated cred + RBAC), plus the GitHub-side wiring (federated
-     subject + `AZURE_CLIENT_ID`/`TENANT_ID`/`SUBSCRIPTION_ID` as GH secrets). The
-     workflow can't authenticate without the second half.
+   - **Two separate workflows, credentials firewalled.** `ci.yml` is the
+     credential-free gate (gofmt/build/vet/test, `contents: read` only) — kept
+     free of Azure creds by design so fork PRs never request tokens. `image.yml`
+     is the deploy path (`id-token: write`): OIDC login → `az acr login` →
+     build/push SHA-tagged → `az containerapp job update` to repoint the Job at
+     the new tag. Push needs only **AcrPush**; the repoint needs
+     `Microsoft.App/jobs/write`, granted via a **custom role scoped to the single
+     Job** (not Contributor, not RG-wide) assigned to `jf-dev-ci-uami` in
+     `rbac.bicep`, with `jobName` threaded from `main.bicep`. Net least-privilege:
+     the CI identity can push images and update one Job's image, nothing else —
+     and still holds no `roleAssignments/write`.
+   - **OIDC, both halves — keyless, no app registration.** Azure side: a
+     dedicated **user-assigned managed identity** (`jf-dev-ci-uami`) with a
+     federated credential (subject `repo:<owner>/<repo>:ref:refs/heads/main`),
+     deployed standalone via `infra/ci-oidc.bicep` + `scripts/oidc.sh` — a UAMI
+     (not an app registration) so it's a first-class ARM resource a forker
+     reproduces from Bicep, not a hand-clicked Graph object. GitHub side: the
+     identity's client ID, tenant, subscription, and ACR name as repo **variables**
+     (not secrets — they're identifiers), consumed by `azure/login@v2`. The two
+     halves are independent deploys; the fed-cred subject is the contract the GH
+     side must match exactly (a PR trigger presents a different subject and won't
+     authenticate — merge/`push: main` is the validating trigger).
    - **First-deploy chicken-and-egg:** `containerImage` needs a placeholder param in
      `containerAppsJob.bicep` — without an initial value the first deploy breaks the
      deploy→image cycle. `scripts/bootstrap.sh` then runs the idempotent full sequence
      (bicep → build → push → Job-update) as the new-user entry point.
-   - **Image cleanup:** decide keep-and-relabel vs delete. Keep-and-relabel preserves
-     SHA-based rollback if a Job-update points at a bad image; ACR retention policies
-     need Premium SKU, so on this tier cleanup stays manual/scripted regardless.
+   - **Image cleanup — decided: no lifecycle policy, SHA tags disposable.** The
+     image SHA is **not part of the data model** — it's in no table, and any
+     meaningful change surfaces in `config_id`/`resume_id`/`contributor_id`
+     (§10.1), which *are* recorded. So retained images buy no provenance the data
+     can join to; the one historical exception (the pre/post malformed-key sentinel
+     boundary, §4.8) is sliced by date, not image. Cost is negligible on the
+     current SKU regardless. **Operational choice, not data-integrity:** SHA tags
+     (not `:latest`) are kept while Scotty is sole operator, solely to preserve
+     manual rollback to a prior image. Production/forker path will move to
+     `:latest`-overwrite to drop the repoint step entirely — at which point verify
+     the Job actually re-pulls on a same-tag push (Container Apps caches by tag;
+     the classic `:latest` footgun) before relying on "no update needed."
 
 **Deferred — recorded, not dropped (post-launch, not data-validity concerns):**
 - **Panel models are not yet in `openai.bicep`.** The deployed models (§12) were stood
