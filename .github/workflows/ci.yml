@@ -7,7 +7,6 @@ on:
   push:
     branches:
       - main
-      - refactor/cloud-agnostic-refactoring # remove once this branch merges
   pull_request:
 
 permissions:
