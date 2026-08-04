@@ -46,25 +46,21 @@ param postgresAppPrincipalName string
 @description('Cron schedule for the daily run - matches AWS template.yaml\'s cron(0 13 * * ? *) UTC time.')
 param cronSchedule string = '0 13 * * *'
 
+@description('Deploy-time contributor identity token; injected by bootstrap.sh')
+param contributorId string
+
 var baseEnv = [
   {
   // ID for user, specifically for data-evaluation purposes
   // set to "test" currently for trial cron run
   name: 'AZURE_CONTRIBUTOR_ID'
-  value: 'test'
+  value: contributorId
   }
-  {
-  // ID for resume, specifically for data-evalutation purposes
-  // set to "test" currently for trial cron run
-  name: 'AZURE_RESUME_ID'
-  value: 'test'
-  }
-  {
-  // ID for config, specifically for data-evaluation purposes
-  // set to "test" currently for trial cron run
-  name: 'AZURE_CONFIG_ID'
-  value: 'test'
-  }
+  // resume_id and config_id are no longer env-set: both are content hashes
+  // computed at wire time from instructions.md / sources.json /
+  // filterKeywords.json / panel knobs (CLAUDE.md's config_id definition) -
+  // an env var here could silently diverge from the hash it's supposed to
+  // represent, which is exactly what moving to a content hash avoids.
   {
   // Needed to avoid 400 error during fetch of AAD token
   // without this, you will  get ManagedIdentityCredential error  

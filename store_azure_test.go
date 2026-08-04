@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -217,6 +218,150 @@ func TestAzureStoreRecordScoresPersistsItemizedTokens(t *testing.T) {
 	}
 	if !found["m-itemized"] || !found["m-bare"] {
 		t.Fatalf("expected rows for both m-itemized and m-bare, got %v", found)
+	}
+}
+
+// TestAzureStoreRecordScoresReasoningNullVsEmpty is the regression test for
+// the recordEvent nil-if-empty fix: an empty Go string Reasoning must land
+// as SQL NULL, not "" - this matters most for sentinel rows (CLAUDE.md
+// §4.8) where an unsalvageable reasoning must be distinguishable from a
+// model that genuinely returned empty text. Queries the column directly,
+// not via ExportRows, for the same reason as the emitted/ev-score test
+// above.
+func TestAzureStoreRecordScoresReasoningNullVsEmpty(t *testing.T) {
+	s := newTestAzureStore(t)
+	ctx := context.Background()
+
+	jobEmpty := Job{Company: "Eta", Title: "SWE", Location: "Remote", Source: "greenhouse", PostedAt: time.Now().Unix()}
+	jobText := Job{Company: "Theta", Title: "SWE", Location: "Remote", Source: "greenhouse", PostedAt: time.Now().Unix() + 1}
+	events := []ScoringEvent{
+		{Job: jobEmpty, Result: ScoreResult{Model: "m-empty-reasoning", EmittedScore: 50, Reasoning: "", Raw: json.RawMessage(`{}`), ScoredAt: time.Now()}},
+		{Job: jobText, Result: ScoreResult{Model: "m-text-reasoning", EmittedScore: 50, Reasoning: "has text", Raw: json.RawMessage(`{}`), ScoredAt: time.Now()}},
+	}
+	if err := s.RecordScores(ctx, events, "test-contributor", "test-resume", "test-config", "test-instructions-v1"); err != nil {
+		t.Fatalf("RecordScores: %v", err)
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT j.company, se.reasoning
+		FROM scoring_events se JOIN jobs j ON j.composite_key = se.composite_key
+		WHERE j.company IN ('Eta', 'Theta')
+	`)
+	if err != nil {
+		t.Fatalf("query scoring_events: %v", err)
+	}
+	defer rows.Close()
+
+	found := map[string]bool{}
+	for rows.Next() {
+		var company string
+		var reasoning *string
+		if err := rows.Scan(&company, &reasoning); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		found[company] = true
+		switch company {
+		case "Eta":
+			if reasoning != nil {
+				t.Errorf("Eta reasoning = %q, want NULL (empty Go string must not become SQL '')", *reasoning)
+			}
+		case "Theta":
+			if reasoning == nil || *reasoning != "has text" {
+				t.Errorf("Theta reasoning = %v, want \"has text\"", reasoning)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate rows: %v", err)
+	}
+	if !found["Eta"] || !found["Theta"] {
+		t.Fatalf("expected rows for both Eta and Theta, got %v", found)
+	}
+}
+
+// TestAzureStoreRecordScoresPersistsSentinelRow is the end-to-end
+// persistence regression test for CLAUDE.md §4.8: a malformed-key sentinel
+// ScoringEvent (as zipScoreEvents now produces) must round-trip its
+// emitted_score sentinel and NULL ev_score exactly like any other event -
+// no special-casing needed in store_azure.go beyond the reasoning fix above.
+func TestAzureStoreRecordScoresPersistsSentinelRow(t *testing.T) {
+	s := newTestAzureStore(t)
+	ctx := context.Background()
+
+	job := Job{Company: "Iota", Title: "SWE", Location: "Remote", Source: "greenhouse", PostedAt: time.Now().Unix()}
+	rawPayload := json.RawMessage(`{"key":"bogus-key","score":99,"reasoning":"unattributed"}`)
+	events := []ScoringEvent{
+		{Job: job, Result: ScoreResult{
+			Model:        "m-sentinel",
+			EmittedScore: malformedKeyEmittedScore,
+			EVScore:      nil,
+			Raw:          rawPayload,
+			ScoredAt:     time.Now(),
+		}},
+	}
+	if err := s.RecordScores(ctx, events, "test-contributor", "test-resume", "test-config", "test-instructions-v1"); err != nil {
+		t.Fatalf("RecordScores: %v", err)
+	}
+
+	compositeKey := job.createCompositeKey()
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT se.emitted_score, se.ev_score, se.raw
+		FROM scoring_events se
+		WHERE se.composite_key = $1
+	`, compositeKey)
+	if err != nil {
+		t.Fatalf("query scoring_events: %v", err)
+	}
+	defer rows.Close()
+
+	found := false
+	for rows.Next() {
+		var emitted float64
+		var evScore *float64
+		var raw []byte
+		if err := rows.Scan(&emitted, &evScore, &raw); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		found = true
+		if emitted != malformedKeyEmittedScore {
+			t.Errorf("emitted_score = %v, want %v", emitted, malformedKeyEmittedScore)
+		}
+		if evScore != nil {
+			t.Errorf("ev_score = %v, want NULL", *evScore)
+		}
+		// raw is a JSONB column: Postgres reformats whitespace on storage
+		// (pre-existing, applies to every row, not sentinel-specific), so
+		// compare parsed equivalence rather than exact bytes - this is what
+		// "verbatim" means here: the same data, not the same formatting.
+		var gotParsed, wantParsed any
+		if err := json.Unmarshal(raw, &gotParsed); err != nil {
+			t.Fatalf("unmarshal stored raw: %v", err)
+		}
+		if err := json.Unmarshal(rawPayload, &wantParsed); err != nil {
+			t.Fatalf("unmarshal expected raw: %v", err)
+		}
+		if !reflect.DeepEqual(gotParsed, wantParsed) {
+			t.Errorf("raw = %s, want %s (verbatim malformed payload)", raw, rawPayload)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate rows: %v", err)
+	}
+	if !found {
+		t.Fatal("expected a scoring_events row for the sentinel event")
+	}
+
+	var withNegative, total int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FILTER (WHERE emitted_score < 0), COUNT(*)
+		FROM scoring_events se
+		WHERE se.composite_key = $1
+	`, compositeKey).Scan(&withNegative, &total); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if withNegative != 1 || total != 1 {
+		t.Fatalf("expected the sentinel row to be excluded by emitted_score >= 0 filtering, got %d/%d with emitted_score<0", withNegative, total)
 	}
 }
 

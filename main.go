@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"log"
 	"log/slog"
 	"net/http"
@@ -37,8 +35,15 @@ type App struct {
 
 	// InstructionsVersion is a short content hash of instructions.md,
 	// computed once at wire time (CLAUDE.md §10). Set by wireAzure only;
-	// stays "" on AWS.
+	// stays "" on AWS. Also reused verbatim as resume_id (CLAUDE.md's
+	// config_id definition) - one hash, two columns, not two computations.
 	InstructionsVersion string
+
+	// ConfigID is a short content hash over the run-comparability config
+	// knobs (CLAUDE.md's config_id definition, v1), computed once at wire
+	// time alongside InstructionsVersion. Set by wireAzure only; stays "" on
+	// AWS.
+	ConfigID string
 }
 
 var app *App
@@ -191,8 +196,16 @@ func wireAzure(ctx context.Context, app *App) error {
 	// A content hash, not a human-typed label (CLAUDE.md §10): guarantees it
 	// can't drift from what was actually sent, since editing instructions.md
 	// changes the hash automatically - no version bump to remember.
-	instructionsSum := sha256.Sum256(instructions)
-	app.InstructionsVersion = hex.EncodeToString(instructionsSum[:])[:12]
+	app.InstructionsVersion = instructionsVersionHash(instructions)
+
+	// config_id (CLAUDE.md's config_id definition, v1): a content hash over
+	// the knobs that define whether two runs are comparable, computed the
+	// same way and at the same point as InstructionsVersion just above.
+	configID, err := computeConfigID(ctx, app.Config)
+	if err != nil {
+		return wrapErr("computing config_id", err)
+	}
+	app.ConfigID = configID
 
 	apiKey := os.Getenv("AZURE_OPENAI_API_KEY") // empty is expected/fine for local Ollama; real key lands in step 7
 
@@ -350,15 +363,17 @@ func handler(ctx context.Context) error {
 	// and model-effects are inseparable once data from more than one
 	// contributor exists. Azure-only - AWS's DynamoDB store has no columns
 	// for this, and there's no non-fabricated equivalent to invent for it.
-	// Checked before any scoring happens so a misconfigured run fails fast
-	// rather than wasting API spend and then refusing to store the results.
+	// resumeID/configID are the content hashes wireAzure computed onto App
+	// (InstructionsVersion/ConfigID) - only contributorID is a plain env
+	// read, so only it needs an emptiness check; the hashes can't be empty
+	// once wireAzure has succeeded.
 	var contributorID, resumeID, configID string
 	if app.cloudProvider == "azure" {
 		contributorID = app.Config.ContributorID()
-		resumeID = app.Config.ResumeID()
-		configID = app.Config.ConfigID()
-		if contributorID == "" || resumeID == "" || configID == "" {
-			return traceErrorf("missing contributor/resume/config identity - set AZURE_CONTRIBUTOR_ID, AZURE_RESUME_ID, AZURE_CONFIG_ID (CLAUDE.md §10)")
+		resumeID = app.InstructionsVersion
+		configID = app.ConfigID
+		if contributorID == "" {
+			return traceErrorf("missing contributor identity - set AZURE_CONTRIBUTOR_ID (CLAUDE.md §10)")
 		}
 	}
 

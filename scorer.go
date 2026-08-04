@@ -58,24 +58,80 @@ type ScoreResult struct {
 	Temperature  float64 // run-level value actually sent (CLAUDE.md §4.7); 0 where unused (AWS path)
 }
 
+// malformedKeyEmittedScore is the sentinel emitted_score persisted for a
+// scoring_events row that could not be correlated to any job in its batch.
+// -2 is outside the valid 0-100 rubric range and distinct from a legitimate
+// score of 0, so it can never be confused with real model output.
+//
+// VERSIONED CONSTANT (CLAUDE.md §4.8, v1) - changing this value is a
+// breaking change for anyone querying on it; introduce a new
+// value/version rather than editing this one in place.
+const malformedKeyEmittedScore float64 = -2
+
 // zipScoreEvents joins jobs with their scoring results by JobKey. A job with
-// no matching result (the provider dropped it) is logged and skipped rather
-// than producing a zero-value event. batchIndex is stamped onto every event
-// so the run's persistence log (store_azure.go) can be correlated back to the
+// a matching result produces a normal event. A job with no matching result
+// is either (a) paired best-effort, by position, with a "leftover" result
+// that itself couldn't be claimed by any job's key (an item whose JSON
+// failed to parse, or whose key didn't match anything in the batch) - this
+// produces a sentinel event (malformedKeyEmittedScore, CLAUDE.md §4.8)
+// rather than losing the raw payload - or (b) if no leftover result remains
+// to pair with, logged and dropped: the provider genuinely returned nothing
+// for that job. batchIndex is stamped onto every event so the run's
+// persistence log (store_azure.go) can be correlated back to the
 // scoring-time log for the same batch.
 func zipScoreEvents(a *App, jobs []Job, results []ScoreResult, batchIndex int) []ScoringEvent {
-	byKey := make(map[string]ScoreResult, len(results))
-	for _, r := range results {
-		byKey[r.JobKey] = r
+	claimed := make([]bool, len(results))
+	byKey := make(map[string]int, len(results))
+	for i, r := range results {
+		if r.JobKey == "" {
+			continue // never a real match target - see scorer_openai.go sentinel JobKey
+		}
+		if _, exists := byKey[r.JobKey]; !exists {
+			byKey[r.JobKey] = i
+		}
 	}
+
 	events := make([]ScoringEvent, 0, len(jobs))
+	var unmatchedJobs []Job
 	for _, j := range jobs {
-		r, ok := byKey[j.Key]
+		i, ok := byKey[j.Key]
 		if !ok {
-			a.Logger.Warn("no score returned for job", "key", j.Key)
+			unmatchedJobs = append(unmatchedJobs, j)
 			continue
 		}
-		events = append(events, ScoringEvent{Job: j, Result: r, BatchIndex: batchIndex})
+		claimed[i] = true
+		events = append(events, ScoringEvent{Job: j, Result: results[i], BatchIndex: batchIndex})
 	}
+
+	var leftovers []ScoreResult
+	for i, r := range results {
+		if !claimed[i] {
+			leftovers = append(leftovers, r)
+		}
+	}
+
+	// Best-effort positional pairing (CLAUDE.md §4.8): once key-matching has
+	// already failed, order within the batch is the only signal left. This
+	// can mis-attribute which payload lands on which job if the provider
+	// didn't preserve order for its failed items - accepted deliberately,
+	// same trade-off as bestEffortScoreEV's "best-effort, never required".
+	n := len(unmatchedJobs)
+	if len(leftovers) < n {
+		n = len(leftovers)
+	}
+	for i := 0; i < n; i++ {
+		job := unmatchedJobs[i]
+		r := leftovers[i]
+		r.EmittedScore = malformedKeyEmittedScore // authoritative override regardless of what the leftover carried
+		r.EVScore = nil                           // always NULL on a sentinel row (CLAUDE.md §4.8)
+		a.Logger.Warn("scoring result could not be correlated to a job key; persisting sentinel row",
+			"key", job.Key, "batch_index", batchIndex, "model", r.Model)
+		events = append(events, ScoringEvent{Job: job, Result: r, BatchIndex: batchIndex})
+	}
+	// Genuinely missing from the response - no leftover to pair with. Unchanged behavior.
+	for i := n; i < len(unmatchedJobs); i++ {
+		a.Logger.Warn("no score returned for job", "key", unmatchedJobs[i].Key)
+	}
+
 	return events
 }

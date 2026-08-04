@@ -4,10 +4,10 @@ name: CI
 # infra (scorer_openai, store_azure) self-skip when their env vars are unset, so
 # nothing here needs Azure, a database, or a running model.
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-      - refactor/cloud-agnostic-refactoring # remove once this branch merges
   pull_request:
 
 permissions:

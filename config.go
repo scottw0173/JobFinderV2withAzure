@@ -47,13 +47,15 @@ type ConfigSource interface {
 	RescoreEveryRun() bool
 	Temperature() float32
 	BatchSize() int
-	// ContributorID/ResumeID/ConfigID are per-event identity (CLAUDE.md §10):
-	// without them, person-effects and model-effects are inseparable once
-	// data from more than one contributor exists. Azure-only - AWS
-	// implementations return "".
+	// ContributorID is per-event identity (CLAUDE.md §10): without it,
+	// person-effects and model-effects are inseparable once data from more
+	// than one contributor exists. Azure-only - AWS implementations return
+	// "". ResumeID/ConfigID are not ConfigSource methods: both are content
+	// hashes computed once in wireAzure (ResumeID reuses InstructionsVersion;
+	// ConfigID is computeConfigID's output) and stored directly on App, the
+	// same treatment InstructionsVersion already gets - a computed hash has
+	// no env var to read, so there's nothing for a ConfigSource method to do.
 	ContributorID() string
-	ResumeID() string
-	ConfigID() string
 	// RunMode selects the run type: "main" (full set, current behavior) or
 	// "floor" (representative panel, repeated). Only "main" is implemented;
 	// "floor" is a later edition and the handler refuses it for now.

@@ -36,6 +36,9 @@ param azureModelsJson string = ''
 @description('Name of model that will be used to screen jobs to fill out the table, panel_jobs')
 param azureScreeningModel string = ''
 
+@description('Deploy-time contributor identity token; injected by bootstrap.sh')
+param contributorId string = 'UNSET'
+
 var uniqueSuffix = uniqueString(resourceGroup().id)
 
 // ---- Identity ----
@@ -141,6 +144,7 @@ module containerAppsJob 'modules/containerAppsJob.bicep' = {
   params: {
     name: '${namePrefix}-job'
     location: location
+    contributorId: contributorId
     environmentId: containerAppsEnv.outputs.id
     uamiId: jobIdentity.outputs.id
     uamiClientId: jobIdentity.outputs.clientId
@@ -166,6 +170,7 @@ module rbac 'modules/rbac.bicep' = {
     keyVaultId: keyVault.outputs.id
     storageAccountId: storage.outputs.id
     openAiAccountIds: union([openai.outputs.id], extraOpenAiAccountIds)
+    jobName: '${namePrefix}-job'
   }
 }
 

@@ -65,8 +65,10 @@ framing that used to live here and in §9.
 - Panel build runs a cheap screening pass (`AZURE_SCREENING_MODEL`) over the full
   post-filter set for provisional scores used only to stratify into bands (never as
   experimental data), then seeded round-robin across companies within each band.
-  Screener is currently Kimi-K2.5 — DeepSeek-V4-Flash (the intended screener) is
-  blocked until the subscription leaves Free Tier.
+  Screener is currently gpt-5.4-mini (a deployed panel model reused as screener after
+  Kimi-K2.5 was cut; its screening scores only stratify into bands and are never used
+  as experimental data, so the double duty is safe). DeepSeek-V4-Flash (the intended
+  screener) remains blocked until the subscription leaves Free Tier.
 - Panel seed auto-derives from build date+time (YYYYMMDDHHMMSS, UTC) via `deriveSeed`
   when `AZURE_PANEL_SEED` is unset; the env var stays an optional override for replay.
 - Build trigger: `panel_jobs` empty → build; non-empty → reuse. No separate flag.
@@ -117,42 +119,85 @@ framing that used to live here and in §9.
    reconcile the model names against what `openai.bicep` actually deploys.
 
 **The frontier — bounded next tasks:**
-1. **Wire `AZURE_STORAGE_ACCOUNT`** into the Job env in `containerAppsJob.bicep`,
-   sourced from `storage.outputs.name` in `main.bicep`.
-2. **§§4–8 measurement instrument — mostly done; split by gating, NOT one blob.**
+1. **§§4–8 measurement instrument — mostly done; split by gating, NOT one blob.**
    A code read of the pieces understates how much is wired, so be precise:
    - **Done and wired through `handler()`** (verified by tracing the scoring loop,
      not just the files): the calendar-driven batch-size sweep (run-level), run-level
      temperature, the per-model 75%-derated TPM/RPM throttle (§8), protocol-split
      scorer routing (§7), itemized token capture + `usage_raw` backstop, best-effort
-     `ev_score` (§4.6), and multi-contributor identity (§10). Don't rebuild these.
-   - **Remaining, code-only — NOT blocked on live models** (unlike task 3): the
-     **noise-floor tier**. `handler()` runs a single pass and the insert hardcodes
-     the literal `"main"` for `run_kind` in `store_azure.go`; there is no path that
-     repeat-scores a representative subset per model and tags it `"floor"`. The
-     schema is ready (`run_kind` = `'main' | 'floor'`, distinguishing the two
-     sampling tiers) but the invocation logic isn't. This is writable now — its
-     only dependency is a **Scotty decision**, not a live value: *how a floor run is
-     triggered* (separate cron / an env-arg on the Job / a distinct execution),
-     which determines what the code branches on. Claude Code can plumb the
-     repeat-loop and a real `run_kind` once that trigger is decided; it can't invent
-     the trigger.
-   - **Remaining, verify-only — blocked on live scoring** (folds into launch-day,
-     §11): confirm the `ev_score` EV path actually *fires* against a real
-     logprob-returning model rather than always silently falling back to the emitted
-     integer, and that throttle/token-capture behave against real provider response
-     shapes. Can't be proven without a real scoring call (needs task 3's deployed
-     models).
-3. - **Known gap — per-model run observability (immediate next task):** a full run now
-     executes end-to-end, but the logs predate the multi-model/multi-batch design — no
-     `model` / `batch_size` / per-write row counts — so which models completed calls, and
-     where rows are lost, is not observable from logs. A recent run wrote fewer rows than
-     expected (≈ panel_size × model_count) and the cause can't yet be localized. Structured
-     per-model/per-batch logging + run-start/run-end reconciliation is next.
-    - **Scraping bypass on populated panel (decided, next task):** on the Azure path, a
-     non-empty `panel_jobs` means skip scraping/filtering/seen-set and score the snapshot;
-     scrape runs only to build the panel when empty. One seam in the Azure orchestration;
-     AWS path untouched.
+     `ev_score` (§4.6), multi-contributor identity (§10), structured per-model/
+     per-batch logging with run-start/run-end reconciliation, and the scraping bypass
+     on a populated panel (non-empty `panel_jobs` → skip scraping/filtering/seen-set
+     and score the snapshot; scrape only to build the panel when empty; AWS path
+     untouched). Don't rebuild these.
+   - **Remaining, code-only — NOT blocked on live models:** the **noise-floor tier**.
+     `handler()` runs a single pass and the insert hardcodes the literal `"main"` for
+     `run_kind` in `store_azure.go`; there is no path that repeat-scores a
+     representative subset per model and tags it `"floor"`. The schema is ready
+     (`run_kind` = `'main' | 'floor'`, distinguishing the two sampling tiers) but the
+     invocation logic isn't. This is writable now — its only dependency is a **Scotty
+     decision**, not a live value: *how a floor run is triggered* (separate cron / an
+     env-arg on the Job / a distinct execution), which determines what the code
+     branches on. Claude Code can plumb the repeat-loop and a real `run_kind` once that
+     trigger is decided; it can't invent the trigger.
+   - **Remaining, verify-only — folds into launch-day (§11):** confirm the `ev_score`
+     EV path actually *fires* against a real logprob-returning model rather than always
+     silently falling back to the emitted integer, and that throttle/token-capture
+     behave against real provider response shapes. The panel is deployed, so this is
+     now checkable on a real run.
+
+
+
+  **Deploy/image lifecycle & bootstrap (this branch, `ci/image-lifecycle-bootstrap`).**
+   Hardened the build/deploy loop that has cost repeated manual troubleshooting, so it
+   stops eating time before data collection is live. Tracked on the ClickUp board of
+   the same name; the pieces:
+   - **Two separate workflows, credentials firewalled.** `ci.yml` is the
+     credential-free gate (gofmt/build/vet/test, `contents: read` only) — kept
+     free of Azure creds by design so fork PRs never request tokens. `image.yml`
+     is the deploy path (`id-token: write`): OIDC login → `az acr login` →
+     build/push SHA-tagged → `az containerapp job update` to repoint the Job at
+     the new tag. Push needs only **AcrPush**; the repoint needs
+     `Microsoft.App/jobs/write`, granted via a **custom role scoped to the single
+     Job** (not Contributor, not RG-wide) assigned to `jf-dev-ci-uami` in
+     `rbac.bicep`, with `jobName` threaded from `main.bicep`. Net least-privilege:
+     the CI identity can push images and update one Job's image, nothing else —
+     and still holds no `roleAssignments/write`.
+   - **OIDC, both halves — keyless, no app registration.** Azure side: a
+     dedicated **user-assigned managed identity** (`jf-dev-ci-uami`) with a
+     federated credential (subject `repo:<owner>/<repo>:ref:refs/heads/main`),
+     deployed standalone via `infra/ci-oidc.bicep` + `scripts/oidc.sh` — a UAMI
+     (not an app registration) so it's a first-class ARM resource a forker
+     reproduces from Bicep, not a hand-clicked Graph object. GitHub side: the
+     identity's client ID, tenant, subscription, and ACR name as repo **variables**
+     (not secrets — they're identifiers), consumed by `azure/login@v2`. The two
+     halves are independent deploys; the fed-cred subject is the contract the GH
+     side must match exactly (a PR trigger presents a different subject and won't
+     authenticate — merge/`push: main` is the validating trigger).
+   - **First-deploy chicken-and-egg:** `containerImage` needs a placeholder param in
+     `containerAppsJob.bicep` — without an initial value the first deploy breaks the
+     deploy→image cycle. `scripts/bootstrap.sh` then runs the idempotent full sequence
+     (bicep → build → push → Job-update) as the new-user entry point.
+   - **Image cleanup — decided: no lifecycle policy, SHA tags disposable.** The
+     image SHA is **not part of the data model** — it's in no table, and any
+     meaningful change surfaces in `config_id`/`resume_id`/`contributor_id`
+     (§10.1), which *are* recorded. So retained images buy no provenance the data
+     can join to; the one historical exception (the pre/post malformed-key sentinel
+     boundary, §4.8) is sliced by date, not image. Cost is negligible on the
+     current SKU regardless. **Operational choice, not data-integrity:** SHA tags
+     (not `:latest`) are kept while Scotty is sole operator, solely to preserve
+     manual rollback to a prior image. Production/forker path will move to
+     `:latest`-overwrite to drop the repoint step entirely — at which point verify
+     the Job actually re-pulls on a same-tag push (Container Apps caches by tag;
+     the classic `:latest` footgun) before relying on "no update needed."
+
+**Deferred — recorded, not dropped (post-launch, not data-validity concerns):**
+- **Panel models are not yet in `openai.bicep`.** The deployed models (§12) were stood
+  up by hand in AI Foundry; `openai.bicep` does not declare them, so a fresh clone
+  cannot reproduce the panel from IaC. This is a reproducibility/onboarding gap, not a
+  measurement gap — intentionally deferred until data collection is live. Same bucket
+  as the user-facing setup **README**, also deferred to post-launch. Both are picked up
+  once the panel is gathering data, not before.
 
 
 > Read code in **execution order** (`main` → `wireAzure` → `handler` →
@@ -266,6 +311,12 @@ does EV differ from emitted, and for which models" be answerable.
   by the EV path → `ev_score` is `NULL` there too. Don't "fix" this by guessing;
   leave the fallback.
 - Requesting logprobs is gated by `WantLogprobs` on `ModelConfig` (§6).
+- **Some 2026 OpenAI models reject logprob requests with a hard 400**, distinct from
+  the "logprobs absent/unusable" case above: gpt-5.5 and the gpt-5.6 triplet
+  (`-sol`/`-luna`/`-terra`) error the whole call if logprobs are requested, so their
+  `wantLogprobs` is set `false` in `main.bicepparam`. When onboarding a new model,
+  assume `wantLogprobs:false` until a probe confirms it accepts the request — a wrong
+  `true` fails every scoring call for that model, not just the EV path.
 
 
 ### 4.7 Temperature is a run-level variable, not per-model
@@ -282,6 +333,50 @@ Code requirements:
   row) — so it's a groupable condition, and so any provider-side clamping/reinterp
   is visible (providers differ in how they honor a given value; capture what was
   sent, don't assume it was obeyed).
+
+**Current operating point: default temperature is `1`, not `0`.** The gpt-5.6 models
+reject a temperature of `0` outright, so the run-level default was moved to `1`. This
+stays consistent with the rule above (still uniform across the panel within a run),
+but the operating point *changed*: any pre-move rehearsal data was taken at a
+different temperature and is not comparable across that boundary — treat the move as a
+run-condition change, not a no-op.
+
+### 4.8 Malformed/unattributed scoring results — sentinel `emitted_score = -2`
+
+**VERSIONED CONSTANT — v1.** When a scoring response item can't be
+correlated to any job in its batch — either its JSON failed to unmarshal at
+all, or it unmarshaled fine but its `key` didn't match any job's `Key` in the
+batch (typo/truncation/hallucination) — persist a **sentinel
+`scoring_events` row** rather than silently dropping it. The failure is
+itself data about the model's behavior and must not be lost.
+
+- **`emitted_score = -2`** (`malformedKeyEmittedScore` in `scorer.go`) —
+  outside the valid 0-100 rubric range and distinct from a legitimate score
+  of 0, so it can never be confused with real model output. Changing this
+  value is a breaking change for anyone querying on it and requires a
+  **v2** (a new constant/value, documented as such), not an in-place edit.
+- **`composite_key`** always comes from the request-side `Job` this row is
+  paired with, via the same `createCompositeKey()` every other row uses
+  (`store_azure.go`'s `recordEvent`) — **never** parsed out of the
+  malformed response, so it always references a real, known posting.
+- **`ev_score` is always `NULL`** on a sentinel row, even if a stray EV
+  computation happened to succeed against a hallucinated/mismatched key — a
+  number computed against an already-untrustworthy key carries no signal
+  and would contaminate the EV column's provenance guarantee (§4.6).
+- **`raw`** is the actual verbatim raw bytes of the malformed item as
+  returned by the model, never a synthesized status object.
+- **Best-effort positional pairing, not identity-verified:** when a batch
+  has more than one unmatched job and more than one leftover
+  malformed/unattributed result simultaneously, `zipScoreEvents`
+  (`scorer.go`) pairs them positionally, in original order — there is no
+  stronger correlation available once a key is unusable. This risks
+  mis-attributing which raw payload lands on which job if the provider
+  didn't preserve response order for its failed items. Chosen deliberately
+  over only pairing exact, unambiguous 1:1 cases: surfacing the failure
+  (even imperfectly attributed) is more valuable here than dropping it,
+  mirroring `bestEffortScoreEV`'s "best-effort, never required" idiom
+  (§4.6). A job that's genuinely missing from the response with no
+  leftover result to pair with is still logged and dropped, unchanged.
 
 ---
 
@@ -429,6 +524,62 @@ only your own month:
   exactly what makes it possible. "A distributable measurement harness multiple
   people deployed to their own cloud accounts" is a far stronger portfolio claim
   than a personal script.
+
+### 10.1 `resume_id` / `config_id` — content hashes, not hand-typed labels
+
+Both are **computed once per run in `wireAzure`**, the same treatment
+`instructions_version` already got, and stored directly on `App`
+(`InstructionsVersion`, `ConfigID`) rather than read from an env var —
+`ConfigSource` has no `ResumeID()`/`ConfigID()` methods. Rationale: a
+hand-typed value (the old `AZURE_RESUME_ID`/`AZURE_CONFIG_ID`, hardcoded
+`'v1'`/`'test'` in `containerAppsJob.bicep`) can silently drift from what a
+run actually did; a content hash cannot.
+
+- **`resume_id`** reuses `instructions_version` verbatim — same hash, two
+  columns, not two computations. There is currently no separate resume-file
+  concept in this codebase; `instructions.md` is the only per-contributor
+  content that plays that role.
+- **`config_id` definition (v1)** — `sha256` of a canonical JSON encoding of
+  exactly these fields, hex-encoded, truncated to 12 chars, formatted
+  `config-<hash12>` (`computeConfigID` in `config_hash.go`):
+  - **sources.json** — the full parsed `map[string][]string` (provider →
+    company slugs).
+  - **filterKeywords.json** — the full parsed `KeywordFilter{Include,
+    Exclude}`.
+  - **screening model** — `ScreeningModel()`'s resolved value
+    (`AZURE_SCREENING_MODEL` or its default).
+  - **score bands** — `ScoreBands()`'s resolved value (`AZURE_SCORE_BANDS` or
+    `defaultScoreBands`).
+  - **band targets** — `BandTargets()`'s resolved value
+    (`AZURE_BAND_TARGETS` or `defaultBandTargets`) — included alongside score
+    bands because the two jointly define panel composition, i.e. what makes
+    two runs' panels comparable.
+  - **panel size** — `PanelSize()`'s resolved value (`AZURE_PANEL_SIZE` or
+    `30`).
+
+  **Canonicalization:** every map/slice among the above is sorted before
+  marshaling (map keys by Go's `encoding/json`, everything else explicitly in
+  `computeConfigID`), so reordering entries in the source files — without
+  changing their content — does not change the hash.
+
+  **Hard exclusions, not judgment calls:** anything already its own
+  `scoring_calls` column (`temperature_sent`, `batch_size`, `run_kind`) and
+  anything identity-derived (`contributor_id`, `resume_id`, email, hostname).
+  Compared variables must stay queryable columns, not buried in a hash;
+  identity in the hash would break cross-user collision-freedom (two
+  contributors running the identical environment should get the *same*
+  `config_id`). Also excluded, same "not a comparability axis" reasoning:
+  `AZURE_MODELS` (model + deployment are already per-row columns),
+  `PanelSeed`/`MaxPerCompany`/`ActivePanelID`/`RebuildPanel`/
+  `RescoreEveryRun` (operational/reproducibility knobs — panel seed is
+  already recorded per-panel in `panel_jobs.seed`).
+
+  **This list is a versioned contract.** Changing it after live data lands
+  re-partitions all future `config_id`s: runs before/after the change become
+  incomparable by `config_id` even if nothing about the environment actually
+  changed, because the hash input itself changed. If the field list ever
+  needs to change, bump to a v2 definition (documented here, same way) rather
+  than editing v1 in place once data exists.
 
 ---
 

@@ -1,0 +1,31 @@
+name: Image
+# docker build and docker push workflow
+# set required vars as repo vars in github
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4     
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CI_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - run: az acr login --name ${{ vars.ACR_NAME }}
+      - run: |
+          SHORT=$(git rev-parse --short HEAD)
+          IMG=${{ vars.ACR_NAME }}.azurecr.io/jobfinder:$SHORT
+          docker build --platform linux/amd64 -t "$IMG" . && docker push "$IMG"
+      - run: |
+          SHORT=$(git rev-parse --short HEAD)  
+          az containerapp job update \
+            -n ${{ vars.JOB_NAME }} -g ${{ vars.RG_NAME }} \
+            --image ${{ vars.ACR_NAME }}.azurecr.io/jobfinder:$SHORT

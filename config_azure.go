@@ -163,20 +163,13 @@ func (c *azureConfigSource) BatchSize() int {
 	return batchSizeForDay(dayIndex(start, time.Now()))
 }
 
-// ContributorID/ResumeID/ConfigID are per-event identity (CLAUDE.md §10).
-// Plain env reads, no parsing or defaults - empty means unset, and
-// handler()'s gate turns that into a refusal to run rather than silently
-// recording rows with no way to separate person-effects from model-effects.
+// ContributorID is per-event identity (CLAUDE.md §10). Plain env read, no
+// parsing or defaults - empty means unset, and handler()'s gate turns that
+// into a refusal to run rather than silently recording rows with no way to
+// separate person-effects from model-effects. ResumeID/ConfigID are computed
+// hashes (see config.go's ConfigSource doc comment), not read here.
 func (c *azureConfigSource) ContributorID() string {
 	return os.Getenv("AZURE_CONTRIBUTOR_ID")
-}
-
-func (c *azureConfigSource) ResumeID() string {
-	return os.Getenv("AZURE_RESUME_ID")
-}
-
-func (c *azureConfigSource) ConfigID() string {
-	return os.Getenv("AZURE_CONFIG_ID")
 }
 
 // RunMode selects between the "main" sweep (current behavior) and a future
