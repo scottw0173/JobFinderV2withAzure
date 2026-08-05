@@ -136,14 +136,22 @@ var externalProviders = map[string]ExternalProvider{
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
 	{
-		Name:     "gemini-3.5-flash-lite",
-		Protocol: "gemini",
-		BaseURL:  externalProviders["gemini"].BaseURL,
+		Name:         "gemini-3.5-flash-lite",
+		Deployment:   "gemini-3.5-flash-lite",
+		Protocol:     "gemini",
+		BaseURL:      externalProviders["gemini"].BaseURL,
+		TPM:          250000,
+		RPM:          15,
+		WantLogprobs: true,
 	},
 	{
-		Name:     "gemini-3.1-flash-lite",
-		Protocol: "gemini",
-		BaseURL:  externalProviders["gemini"].BaseURL,
+		Name:         "gemini-3.1-flash-lite",
+		Deployment:   "gemini-3.1-flash-lite",
+		Protocol:     "gemini",
+		BaseURL:      externalProviders["gemini"].BaseURL,
+		TPM:          250000,
+		RPM:          15,
+		WantLogprobs: true,
 	},
 }
 
