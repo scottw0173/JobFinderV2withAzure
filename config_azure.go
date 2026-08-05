@@ -140,6 +140,11 @@ var defaultExternalModels = []ModelConfig{
 		Protocol: "gemini",
 		BaseURL:  externalProviders["gemini"].BaseURL,
 	},
+	{
+		Name:     "gemini-3.1-flash-lite",
+		Protocol: "gemini",
+		BaseURL:  externalProviders["gemini"].BaseURL,
+	},
 }
 
 func (c *azureConfigSource) Models(ctx context.Context) ([]ModelConfig, error) {
