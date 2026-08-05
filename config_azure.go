@@ -103,15 +103,58 @@ var defaultAzureModels = []ModelConfig{
 	{Name: "Qwen3.5-397B-A17B", Protocol: "openai"},          // Alibaba, MoE, Fireworks (FW-)
 }
 
+// ExternalProvider is the connection info for one off-Foundry,
+// OpenAI-compatible provider (external-model-providers branch). Instance
+// data only, same rule as ModelConfig (CLAUDE.md §6) - SecretName is the Key
+// Vault join key, resolved at wire time via resolveProviderKey
+// (secrets_keyvault.go); the key itself never lives here.
+type ExternalProvider struct {
+	BaseURL    string // trailing slash preserved as given - scorer_openai.go's TrimSuffix handles either form
+	SecretName string
+}
+
+// externalProviders is the hardcoded off-Foundry provider catalog. Set
+// directly in Go rather than via env/blob (unlike AZURE_MODELS): this branch
+// can't touch Bicep/IaC to add a new param, and a hardcoded Go literal is
+// Scotty's explicit choice for this config.
+var externalProviders = map[string]ExternalProvider{
+	"gemini": {
+		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+		SecretName: "GEMINI-API-KEY",
+	},
+}
+
+// defaultExternalModels is stage 1 of the brief's two-stage Gemini rollout:
+// only the first model (gemini-3.5-flash-lite). The second
+// (gemini-3.1-flash-lite) is added in a follow-up pass once Scotty confirms
+// this one's live panel run lands rows in scoring_calls/scoring_events.
+//
+// TPM/RPM are launch-day VERIFY fields, deliberately left at zero - same
+// convention as defaultAzureModels' own unverified fields (CLAUDE.md §9/§11:
+// live quota values are Scotty's call, not fabricated here). handler()
+// refuses to score a model with TPM<=0 or RPM<=0, so this entry won't run
+// until the real Gemini quota numbers are filled in below.
+var defaultExternalModels = []ModelConfig{
+	{
+		Name:     "gemini-3.5-flash-lite",
+		Protocol: "gemini",
+		BaseURL:  externalProviders["gemini"].BaseURL,
+	},
+}
+
 func (c *azureConfigSource) Models(ctx context.Context) ([]ModelConfig, error) {
 	raw := os.Getenv("AZURE_MODELS")
-	if raw == "" {
-		return defaultAzureModels, nil
-	}
 	var models []ModelConfig
-	if err := json.Unmarshal([]byte(raw), &models); err != nil {
+	if raw == "" {
+		models = append(models, defaultAzureModels...)
+	} else if err := json.Unmarshal([]byte(raw), &models); err != nil {
 		return nil, wrapErr("parsing AZURE_MODELS", err)
 	}
+	// External (off-Foundry) providers ride the same run-level batch
+	// size/temperature and the same handler() loop, routed to their own
+	// Scorer instance by Protocol (wireAzure registers app.Scorers[name] per
+	// externalProviders entry) - config-only from handler()'s perspective.
+	models = append(models, defaultExternalModels...)
 	return models, nil
 }
 

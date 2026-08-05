@@ -71,9 +71,10 @@ func TestAzureConfigSourceDefaults(t *testing.T) {
 		t.Fatalf("Models() error: %v", err)
 	}
 	// The panel is a fixed, known-size selection (CLAUDE.md §12), not a
-	// loose "some models" check.
-	if len(models) != 12 {
-		t.Fatalf("got %d models, want the 12-model panel (CLAUDE.md §12)", len(models))
+	// loose "some models" check: 12 Foundry models + 1 external
+	// (defaultExternalModels' stage-1 Gemini entry, config_azure.go).
+	if len(models) != 13 {
+		t.Fatalf("got %d models, want 12 Foundry + 1 external", len(models))
 	}
 	if !c.RescoreEveryRun() {
 		t.Fatal("azure RescoreEveryRun() should default true")
