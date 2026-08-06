@@ -126,6 +126,10 @@ var externalProviders = map[string]ExternalProvider{
 		BaseURL:    "https://api.mistral.ai/v1",
 		SecretName: "MISTRAL-API-KEY",
 	},
+	"cohere": {
+		BaseURL:    "https://api.cohere.ai/compatibility/v1",
+		SecretName: "COHERE-API-KEY",
+	},
 }
 
 // defaultExternalModels is stage 1 of the brief's two-stage Gemini rollout:
@@ -139,11 +143,18 @@ var externalProviders = map[string]ExternalProvider{
 // refuses to score a model with TPM<=0 or RPM<=0, so this entry won't run
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
+	{Name: "command-a-plus-05-2026",
+		Deployment:   "command-a-plus-05-2026",
+		Protocol:     "cohere",
+		BaseURL:      externalProviders["cohere"].BaseURL,
+		TPM:          20,
+		RPM:          128000,
+		WantLogprobs: false},
 	{Name: "mistral-medium-3-5",
 		Deployment:   "mistral-medium-3-5",
 		Protocol:     "mistral",
 		BaseURL:      externalProviders["mistral"].BaseURL,
-		TPM:          100000,
+		TPM:          30000,
 		RPM:          20,
 		WantLogprobs: false},
 	{
