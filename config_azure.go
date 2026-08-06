@@ -134,6 +134,10 @@ var externalProviders = map[string]ExternalProvider{
 		BaseURL:    "https://integrate.api.nvidia.com/v1",
 		SecretName: "NVIDIA-API-KEY",
 	},
+	"nvidia2": {
+		BaseURL:    "https://integrate.api.nvidia.com/v1/chat/completions",
+		SecretName: "NVIDIA-API-KEY",
+	},
 }
 
 // defaultExternalModels is stage 1 of the brief's two-stage Gemini rollout:
@@ -148,12 +152,21 @@ var externalProviders = map[string]ExternalProvider{
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
 	{
+		Name:         "moonshotai/kimi-k2.6",
+		Deployment:   "moonshotai/kimi-k2.6",
+		Protocol:     "nvidia2",
+		BaseURL:      externalProviders["nvidia2"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
 		Name:         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
 		Deployment:   "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
 		Protocol:     "nvidia",
 		BaseURL:      externalProviders["nvidia"].BaseURL,
-		TPM:          20,
-		RPM:          100000,
+		TPM:          1000000,
+		RPM:          40,
 		WantLogprobs: false,
 	},
 	{
@@ -161,8 +174,8 @@ var defaultExternalModels = []ModelConfig{
 		Deployment:   "nvidia/nemotron-3-ultra-550b-a55b",
 		Protocol:     "nvidia",
 		BaseURL:      externalProviders["nvidia"].BaseURL,
-		TPM:          20,
-		RPM:          100000,
+		TPM:          1000000,
+		RPM:          40,
 		WantLogprobs: false,
 	},
 	{
