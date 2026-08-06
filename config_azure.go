@@ -130,6 +130,10 @@ var externalProviders = map[string]ExternalProvider{
 		BaseURL:    "https://api.cohere.ai/compatibility/v1",
 		SecretName: "COHERE-API-KEY",
 	},
+	"nvidia": {
+		BaseURL:    "https://integrate.api.nvidia.com/v1",
+		SecretName: "NVIDIA-API-KEY",
+	},
 }
 
 // defaultExternalModels is stage 1 of the brief's two-stage Gemini rollout:
@@ -143,20 +147,42 @@ var externalProviders = map[string]ExternalProvider{
 // refuses to score a model with TPM<=0 or RPM<=0, so this entry won't run
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
-	{Name: "command-a-plus-05-2026",
+	{
+		Name:         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+		Deployment:   "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          20,
+		RPM:          100000,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "nvidia/nemotron-3-ultra-550b-a55b",
+		Deployment:   "nvidia/nemotron-3-ultra-550b-a55b",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          20,
+		RPM:          100000,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "command-a-plus-05-2026",
 		Deployment:   "command-a-plus-05-2026",
 		Protocol:     "cohere",
 		BaseURL:      externalProviders["cohere"].BaseURL,
 		TPM:          20,
 		RPM:          128000,
-		WantLogprobs: false},
-	{Name: "mistral-medium-3-5",
+		WantLogprobs: false,
+	},
+	{
+		Name:         "mistral-medium-3-5",
 		Deployment:   "mistral-medium-3-5",
 		Protocol:     "mistral",
 		BaseURL:      externalProviders["mistral"].BaseURL,
 		TPM:          30000,
 		RPM:          20,
-		WantLogprobs: false},
+		WantLogprobs: false,
+	},
 	{
 		Name:         "gemini-3.5-flash-lite",
 		Deployment:   "gemini-3.5-flash-lite",
