@@ -157,6 +157,7 @@ module containerAppsJob 'modules/containerAppsJob.bicep' = {
     postgresFqdn: postgres.outputs.fqdn
     postgresDatabaseName: postgres.outputs.databaseName
     postgresAppPrincipalName: jobIdentity.outputs.name
+    keyVaultUri: keyVault.outputs.uri
   }
 }
 
