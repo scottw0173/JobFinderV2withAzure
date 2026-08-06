@@ -148,6 +148,42 @@ var externalProviders = map[string]ExternalProvider{
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
 	{
+		Name:         "deepseek-ai/deepseek-v4-pro", //this api is set to deprecate on 8/7/2026
+		Deployment:   "deepseek-ai/deepseek-v4-pro", //so expect to delete or to update it soon
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "mistralai/mistral-medium-3.5-128b",
+		Deployment:   "mistralai/mistral-medium-3.5-128b", //this api is set to deprecate on 8/7/2026
+		Protocol:     "nvidia",                            //so expect to delete or to update it soon
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "poolside/laguna-xs-2.1",
+		Deployment:   "poolside/laguna-xs-2.1",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "minimaxai/minimax-m3",
+		Deployment:   "minimaxai/minimax-m3",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
 		Name:         "nvidia/nemotron-3-nano-30b-a3b",
 		Deployment:   "nvidia/nemotron-3-nano-30b-a3b",
 		Protocol:     "nvidia",
