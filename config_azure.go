@@ -148,6 +148,33 @@ var externalProviders = map[string]ExternalProvider{
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
 	{
+		Name:         "nvidia/nemotron-3-nano-30b-a3b",
+		Deployment:   "nvidia/nemotron-3-nano-30b-a3b",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "stepfun-ai/step-3.7-flash",
+		Deployment:   "stepfun-ai/step-3.7-flash",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "z-ai/glm-5.2",
+		Deployment:   "z-ai/glm-5.2",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
 		Name:         "google/gemma-4-31b-it",
 		Deployment:   "google/gemma-4-31b-it",
 		Protocol:     "nvidia",
