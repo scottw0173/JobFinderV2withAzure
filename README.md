@@ -67,24 +67,31 @@ Four Postgres tables (`db/schema.sql`), append-only except `panel_jobs`:
 
 Reusable end to end: fork, point the params at your tenant, run four scripts. Prereqs: `az` CLI (logged in), `gh` CLI, Docker, Go, `psql`.
 
-### 1. Set your parameters
-Edit `infra/main.bicepparam`:
-- `namePrefix`, `location`
-- `postgresAdminObjectId` / `postgresAdminPrincipalName` — **your** Entra object ID and UPN (no safe defaults; the placeholders will fail)
-- `extraOpenAiAccountIds` — any hand-created Foundry accounts in other regions (else leave empty)
-- `azureModelsJson` / `azureScreeningModel` — the Foundry model set and the cheap model used to stratify the panel
+### 1. Parameters — usually nothing to change
+
+infra/main.bicepparam ships ready to deploy. If you use bootstrap.sh (step 2), you don't need to edit anything: it derives your Entra object ID and UPN from az ad signed-in-user and passes them as deploy-time overrides, so the postgresAdmin* placeholders in the file are never used. contributorId is injected the same way.
+
+Optional edits:
+
+namePrefix (jf-dev) / location (westus3) — safe to reuse. Globally-unique resources append uniqueString(resourceGroup().id), so the prefix never collides across accounts; location defaults to the resource group's region.
+extraOpenAiAccountIds — any hand-created Foundry accounts in other regions.
+azureModelsJson / azureScreeningModel — the Foundry model set and the cheap model used to stratify the panel.
+
+Only if you deploy Bicep directly (az deployment group create) instead of via bootstrap.sh: set postgresAdminObjectId / postgresAdminPrincipalName to your real Entra object ID and UPN first. The shipped 0000… / admin@example.com values can't register as the Postgres AAD admin and the deploy will fail.
+
+The commands below assume the shipped jf-dev prefix. If you change namePrefix, substitute it in resource names accordingly (the job becomes <your-prefix>-job, etc.).
 
 ### 2. Deploy + build + point the job — `scripts/bootstrap.sh`
 Deploys the Bicep stack, then builds (`--platform linux/amd64`), pushes the image (SHA-tagged), and repoints the Job at it. Derives your `contributorId` (hash of your UPN) automatically.
 ```bash
-RG=jobfinder-rg ./scripts/bootstrap.sh
+./scripts/bootstrap.sh
 ```
 > Bicep deploy, image push, and job update are three independent operations. Config-only changes don't need a rebuild; a real image change does.
 
 ### 3. Create schema + grants — `scripts/db_setup.sh`
 Run **once**, as yourself (the AAD admin), with your client IP on the server firewall. Applies `db/schema.sql` and grants the runtime identity least-privilege access.
 ```bash
-SERVER_FQDN=<pg-fqdn> ADMIN_UPN=<your-upn-#EXT#-form> RUNTIME_UAMI=<prefix>-uami ./scripts/db_setup.sh
+./scripts/db_setup.sh
 ```
 
 ### 4. Grant yourself Key Vault access, then set the keys — `scripts/kvperm.sh`
@@ -108,21 +115,23 @@ Sets up GitHub OIDC federated credentials so `image.yml` can build and push to A
 Put your `instructions.md` (rubric + résumé), `sources.json`, and `filterKeywords.json` into the `config` blob container. Use the `.example` files in the repo as templates.
 
 ### 7. First run
-The first run must build the panel, which refuses to proceed without a seed. Set these on the Job before triggering it:
-```bash
-az containerapp job update -g jobfinder-rg -n <prefix>-job --set-env-vars \
-  AZURE_SWEEP_START=$(date -u +%F) \
-  AZURE_PANEL_SEED=<nonzero-int> \
-  AZURE_REBUILD_PANEL=true
-```
-Then start it (`az containerapp job start ...`). After the panel exists, unset `AZURE_REBUILD_PANEL`; the daily cron takes over. The batch-size sweep rotates `{1,2,3,5,10}` deterministically from `AZURE_SWEEP_START`.
 
-**Verify the job image before a real run:**
+No env flags are required. On a fresh database the run auto-builds the 30-job panel (no active panel exists yet) with a seed derived from the build timestamp, then scores it. Just start the job:
+
 ```bash
-az containerapp job show -g jobfinder-rg -n <prefix>-job \
+az containerapp job start -g jobfinder-rg -n jf-dev-job
+```
+The daily cron takes over after that. Two optional knobs for the research:
+
+Set AZURE_SWEEP_START (a YYYY-MM-DD date) to enable the batch-size sweep, which rotates {1,2,3,5,10} deterministically from that anchor. Left unset, every run uses batch size 1 — the cleanest setting for per-job token measurement.
+Set AZURE_PANEL_SEED only to reproduce a specific prior panel build; otherwise the timestamp-derived seed is preferred (it carries a traceable build time).
+
+Verify the job image before a real run:
+
+```bash
+az containerapp job show -g jobfinder-rg -n jf-dev-job \
   --query "properties.template.containers[0].image" -o tsv
 ```
-
 ---
 
 ## Runtime configuration (env)
