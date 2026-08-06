@@ -269,8 +269,8 @@ var defaultExternalModels = []ModelConfig{
 		Deployment:   "command-a-plus-05-2026",
 		Protocol:     "cohere",
 		BaseURL:      externalProviders["cohere"].BaseURL,
-		TPM:          20,
-		RPM:          128000,
+		TPM:          128000,
+		RPM:          20,
 		WantLogprobs: false,
 	},
 	{
