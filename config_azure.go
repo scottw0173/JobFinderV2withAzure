@@ -134,10 +134,6 @@ var externalProviders = map[string]ExternalProvider{
 		BaseURL:    "https://integrate.api.nvidia.com/v1",
 		SecretName: "NVIDIA-API-KEY",
 	},
-	"nvidia2": {
-		BaseURL:    "https://integrate.api.nvidia.com/v1/chat/completions",
-		SecretName: "NVIDIA-API-KEY",
-	},
 }
 
 // defaultExternalModels is stage 1 of the brief's two-stage Gemini rollout:
@@ -152,10 +148,37 @@ var externalProviders = map[string]ExternalProvider{
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
 	{
+		Name:         "google/gemma-4-31b-it",
+		Deployment:   "google/gemma-4-31b-it",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "nvidia/nemotron-3-super-120b-a12b",
+		Deployment:   "nvidia/nemotron-3-super-120b-a12b",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
+		Name:         "deepseek-ai/deepseek-v4-flash",
+		Deployment:   "deepseek-ai/deepseek-v4-flash",
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
+		TPM:          1000000,
+		RPM:          40,
+		WantLogprobs: false,
+	},
+	{
 		Name:         "moonshotai/kimi-k2.6",
 		Deployment:   "moonshotai/kimi-k2.6",
-		Protocol:     "nvidia2",
-		BaseURL:      externalProviders["nvidia2"].BaseURL,
+		Protocol:     "nvidia",
+		BaseURL:      externalProviders["nvidia"].BaseURL,
 		TPM:          1000000,
 		RPM:          40,
 		WantLogprobs: false,
