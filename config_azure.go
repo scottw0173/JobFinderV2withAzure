@@ -122,6 +122,10 @@ var externalProviders = map[string]ExternalProvider{
 		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
 		SecretName: "GEMINI-API-KEY",
 	},
+	"mistral": {
+		BaseURL:    "https://api.mistral.ai/v1",
+		SecretName: "MISTRAL-API-KEY",
+	},
 }
 
 // defaultExternalModels is stage 1 of the brief's two-stage Gemini rollout:
@@ -135,6 +139,13 @@ var externalProviders = map[string]ExternalProvider{
 // refuses to score a model with TPM<=0 or RPM<=0, so this entry won't run
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
+	{Name: "mistral-medium-3-5",
+		Deployment:   "mistral-medium-3-5",
+		Protocol:     "mistral",
+		BaseURL:      externalProviders["mistral"].BaseURL,
+		TPM:          100000,
+		RPM:          20,
+		WantLogprobs: false},
 	{
 		Name:         "gemini-3.5-flash-lite",
 		Deployment:   "gemini-3.5-flash-lite",
@@ -142,7 +153,7 @@ var defaultExternalModels = []ModelConfig{
 		BaseURL:      externalProviders["gemini"].BaseURL,
 		TPM:          250000,
 		RPM:          15,
-		WantLogprobs: true,
+		WantLogprobs: false,
 	},
 	{
 		Name:         "gemini-3.1-flash-lite",
@@ -151,7 +162,7 @@ var defaultExternalModels = []ModelConfig{
 		BaseURL:      externalProviders["gemini"].BaseURL,
 		TPM:          250000,
 		RPM:          15,
-		WantLogprobs: true,
+		WantLogprobs: false,
 	},
 }
 
