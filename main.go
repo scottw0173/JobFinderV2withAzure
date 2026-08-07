@@ -223,6 +223,26 @@ func wireAzure(ctx context.Context, app *App) error {
 	app.Scorers = map[string]Scorer{
 		"openai": newOpenAIScorer(app.Logger, scorerClient, apiKey, cred, instructions),
 	}
+
+	// External (off-Foundry) providers (config_azure.go's externalProviders):
+	// each gets its own openaiScorer instance with its own resolved static
+	// key, since - unlike the Foundry "openai" entry above - they can't share
+	// a single key or an AAD AuthScope. Soft-fail per provider, matching
+	// handler()'s existing per-model degrade-not-crash precedent (missing
+	// TPM/RPM, missing BaseURL, unregistered protocol all log and skip): a
+	// provider whose key can't be resolved (e.g. local dev with no
+	// KEYVAULT_URI/env override) just doesn't get registered, and its models
+	// are skipped by handler()'s existing "no scorer registered for
+	// protocol" check rather than failing the whole run.
+	for name, provider := range externalProviders {
+		key, err := resolveProviderKey(ctx, provider.SecretName)
+		if err != nil {
+			app.Logger.Error("resolving external provider key, provider will not be scored",
+				"provider", name, errAttr(err))
+			continue
+		}
+		app.Scorers[name] = newOpenAIScorer(app.Logger, scorerClient, key, nil, instructions)
+	}
 	return nil
 }
 

@@ -1,206 +1,172 @@
-# JobFinder
+# JobFinder V2 — cloud-agnostic job scorer & model-drift instrument
 
-A serverless job scraper and AI fit-scorer that runs itself. Every day it pulls postings from public ATS feeds using a list of source companies that use those ATSs, narrows them to remote roles matching a keyword profile created by the user, scores each one against a personal rubric using the Gemini API, writes the ranked results to DynamoDB, and publishes them to a Google Sheet for review — all on a single scheduled AWS Lambda invocation that costs effectively nothing to operate. Deploys are hands-off: a push to `main` triggers a keyless (OIDC) GitHub Actions run that builds and ships the stack.
+JobFinder collects postings from public ATS feeds (Greenhouse, Lever, Ashby), filters them to roles matching a keyword profile, and scores each one against a personal rubric using an LLM. V2 makes the whole pipeline **cloud-agnostic**: the same Go binary runs on either AWS (Lambda/DynamoDB) or Azure (Container Apps Job/PostgreSQL), selected at runtime by the `CLOUD_PROVIDER` env var.
 
-It's two things at once: a functional tool that surfaces relevant jobs without manual searching, and a portfolio project demonstrating Go, AWS, and LLM integration end to end.
+The two backends serve different goals:
 
----
+- **AWS path** — the original single-invocation daily scorer. A practical tool that surfaces relevant jobs and exports them to a Google Sheet.
+- **Azure path** — a **measurement instrument**. It scores a fixed, score-stratified **30-job panel** every day against a **panel of many models**, writing per-call and per-job records to Postgres. The accumulated data measures behavioral drift and inter-model variance on a real scoring task over a non-repeatable window. Optimize this path for measurement validity and data recoverability, not operational tidiness.
 
-## What it does
-
-```mermaid
-flowchart LR
-    A[EventBridge<br/>daily cron] --> B[Lambda]
-    B --> C[collect<br/>Greenhouse · Lever · Ashby]
-    C --> D[dedup<br/>vs. DynamoDB]
-    D --> E[GC sweep<br/>prune stale]
-    D --> F[keyword filter<br/>remote + title]
-    F --> G[score<br/>Gemini API]
-    G --> H[(DynamoDB<br/>RankedJobsTable)]
-    E --> H
-    H --> J[export<br/>Google Sheets]
-    B --> I[(S3<br/>run logs)]
-```
-
-The pipeline is **collect → dedup → filter → score → write → export**, with a
-garbage-collection pass folded into the same run:
-
-1. **Collect** — Fetch every posting from a configured list of companies across
-   three ATS providers (Greenhouse, Lever, Ashby), each behind its own public
-   JSON API, and normalize them into a single `Job` shape.
-2. **Dedup** — Scan the existing table and keep only postings that haven't been
-   scored before, so the expensive scoring step never repeats work.
-3. **Garbage-collect** — Refresh a `last_seen` timestamp on every job still live
-   in today's feed, and delete jobs that haven't appeared in two days (assumed
-   filled or pulled). A two-day buffer means a single broken scrape run can't
-   wrongly delete anything.
-4. **Filter** — Reduce to remote roles whose titles match an include/exclude
-   keyword profile.
-5. **Score** — Send the survivors to Gemini in small batches with a structured
-   output schema, scoring each against a rubric (`instructions.md`) and getting
-   back a key, a score, and a reasoning string.
-6. **Write** — Persist ranked results to DynamoDB and flush the run's logs to S3.
-7. **Export** — Scan the full table and rewrite a Google Sheet with the current
-   ranked set, so the day's results are reviewable in a spreadsheet without
-   touching AWS. The write is a clear-and-replace snapshot, not an append, so the
-   sheet always mirrors the table's live state.
+This README covers the **Azure path**. The AWS path is documented inline in `template.yaml` / `samconfig.toml`.
 
 ---
 
-## Architecture
+## Architecture (Azure)
 
 | Component | Role |
 |---|---|
-| **AWS Lambda** (`provided.al2023`, arm64) | Runs the whole pipeline on one invocation |
-| **Amazon EventBridge** | Triggers the function daily via cron |
-| **Amazon DynamoDB** (`PAY_PER_REQUEST`) | Stores ranked jobs; doubles as the dedup/GC ledger |
-| **Amazon S3** | Holds config files (`sources.json`, `filterKeywords.json`, `instructions.md`) and run logs |
-| **AWS SSM Parameter Store** | Stores the Gemini API key and the Google service-account key as encrypted SecureStrings |
-| **Google Gemini API** (`gemini-3.1-flash-lite`) | Scores each job against the rubric; Chosen for generous free usage tier and benchmark scores |
-| **Google Sheets API** | Receives the daily export via a service account; the sheet is the human-facing review surface |
-| **AWS SAM** | Defines and deploys all of the above as one stack |
-| **GitHub Actions** (OIDC) | Builds and deploys on push to `main`; assumes a scoped AWS role, no stored keys |
+| **Azure Container Apps Job** (`<prefix>-job`) | Runs the pipeline on a daily cron (`0 13 * * *`) |
+| **PostgreSQL Flexible Server** | Stores jobs, per-call metadata, per-job scores, and the panel. AAD-token auth (no password) |
+| **Blob Storage** (`config` container) | Holds `instructions.md`, `sources.json`, `filterKeywords.json` |
+| **Azure Key Vault** | Holds external-provider API keys; resolved at runtime by managed identity |
+| **Azure Container Registry** | Holds the `jobfinder` image |
+| **Azure AI Foundry / Cognitive Services** | Hosts the in-Azure (OpenAI-compatible) models |
+| **User-assigned managed identities** | Runtime identity (`<prefix>-uami`) + DB-bootstrap identity; keyless throughout |
+| **Bicep** (`infra/`) | Provisions all of the above as one deployment |
+| **GitHub Actions** (OIDC) | Keyless image build/push to ACR on push |
 
-The Go package is intentionally **flat** — no `cmd/` or `internal/` scaffolding.
-
----
-
-## Engineering decisions
-
-The interesting parts of this project are less about the scraping and more about making a rate-limited, stateful pipeline behave correctly and cheaply on serverless infrastructure.
-
-### Idempotent dedup and garbage collection
-
-DynamoDB serves double duty as both the result store and the "have I seen this?" ledger. Each job's identity is a **composite key** — a stable key (company + title + location) joined with its posting timestamp. A shared `compositeKey()` helper guarantees that a freshly scraped `Job` and a stored `DynamoDBItem` produce byte-for-byte identical keys, so membership checks never drift between the two representations.
-
-Garbage collection rides on the dedup scan that already happened. Jobs still present in the live feed get their `last_seen` bumped; jobs absent for more than two days get deleted — unless they're flagged as applied-to. Because deletions are driven by feed membership rather than a stored timestamp alone, a scrape that fails for a day simply skips a bump rather than triggering false deletions. The whole sweep is idempotent: re-running it produces the same end state.
-
-### Rate limiting against a free-tier ceiling
-
-Gemini's free tier caps requests per minute, requests per day, and **tokens** per minute. The scoring loop respects all three with two independent guards: a ticker that paces requests under the RPM limit, and a sliding-window token throttle that sums recent usage and blocks until there's budget before each batch.
-
-The subtle bug this surfaced: persistent `429`s that no per-invocation throttle could explain. The root cause was **concurrent Lambda executions** — Lambda's default retry behavior was spawning overlapping invocations, each maintaining its own in-memory token counter, collectively blowing past the shared API ceiling. The fix was a one-line change in the SAM template (`MaximumRetryAttempts: 0`) plus using asynchronous invocation for manual tests. The throttle is correct; 429's almost certainly mean that there are concurrent executions. With retries disabled, this bug now only surfaces during manual "aws lambda invoke" tests.
-
-### Live token-estimate calibration
-
-Before each batch the code estimates token cost from description length, reserves that against the throttle budget, then logs the estimate against Gemini's actual reported usage. This produced a useful empirical finding: the real character-to-token ratio for these payloads is ~1.6–1.9, not the commonly assumed 4.0 — so estimates calibrated on the wrong ratio would have been off by more than 2x. The calibration log line makes the estimator tunable over time.
-
-### Reliable structured output
-
-Rather than parsing free-form text, scoring requests pin a JSON `responseSchema` (an array of `{key, score, reasoning}` objects). Gemini returns conforming JSON, which unmarshals directly and is joined back to the source jobs by key. Jobs that come back without a score or with a malformed key are logged and skipped rather than silently dropped.
-
-### Failure isolation
-
-Failures are scoped so one bad input can't sink a run. A company whose ATS slug 404s logs a warning and is skipped. A failed table scan degrades to a full re-grade day rather than aborting or, worse, driving deletions off incomplete data. Transient `5xx`s from Gemini are retried with exponential backoff and jitter; `4xx`s fail fast instead of burning retries.
-
-### Least-privilege IAM
-
-Permissions are split into separate scoped policy documents per concern — table CRUD, log-bucket writes, config-bucket reads, and a single SSM parameter read — rather than one broad policy. The Gemini key never appears in code or environment plaintext. It must be set and pulled from an encrypted SSM SecureString at startup.
+**Keyless by design.** The runtime identity authenticates to Postgres, Blob, Key Vault, and Foundry via Entra/managed identity — no secrets in code or Bicep. The *only* stored secrets are the external-provider API keys (below), which live in Key Vault because those providers have no managed-identity path.
 
 ---
 
-## Project structure
+## The model panel
+
+Two tiers of OpenAI-compatible models run in the same handler loop under one run-level batch size and temperature, routed by `protocol`:
+
+**1. In-Azure (Foundry-hosted).** Defined in `infra/main.bicepparam` (`azureModelsJson`) — 8 models: `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.4-nano`, `gpt-5.4`, `gpt-5.5`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.6-sol`. These are deployed to the Foundry account by `infra/modules/openai.bicep`. Add new-region Foundry accounts via `extraOpenAiAccountIds` in the param file.
+
+**2. External providers.** Off-Foundry, OpenAI-compatible endpoints (defined in `config_azure.go`). Each needs an API key stored in **Key Vault** under the exact secret name below:
+
+| Provider | Key Vault secret name |
+|---|---|
+| Google Gemini | `GEMINI-API-KEY` |
+| NVIDIA NIM | `NVIDIA-API-KEY` |
+| Mistral | `MISTRAL-API-KEY` |
+| Cohere | `COHERE-API-KEY` |
+
+> Locally, override any key with an env var (hyphens → underscores, e.g. `GEMINI_API_KEY`) so no Azure identity is needed for dev.
+
+Distinction that matters for the data: **proprietary models are drift subjects; open-weight models served by a host are frozen baselines.** Running the same weights across multiple hosts measures serving differences, not model drift.
+
+---
+
+## Data model
+
+Four Postgres tables (`db/schema.sql`), append-only except `panel_jobs`:
+
+- **`jobs`** — deduped postings (stable composite key from company+title+location).
+- **`scoring_calls`** — one row per model call: config, token usage (itemized + raw usage blob), identity columns.
+- **`scoring_events`** — one row per job scored: score, reasoning, raw model output, logprobs.
+- **`panel_jobs`** — the fixed 30-job panel (regenerable derived state; the only table with DELETE grant).
+
+**Cost is never stored.** Token facts are captured per call; cost is derived at analysis time from a separate temporal price table, so a price change never corrupts historical rows. Batch size and temperature are **run-level** (constant within a comparison), so they never confound a cross-model comparison.
+
+---
+
+## Setup for a fresh account
+
+Reusable end to end: fork, point the params at your tenant, run four scripts. Prereqs: `az` CLI (logged in), `gh` CLI, Docker, Go, `psql`.
+
+### 1. Parameters — usually nothing to change
+
+infra/main.bicepparam ships ready to deploy. If you use bootstrap.sh (step 2), you don't need to edit anything: it derives your Entra object ID and UPN from az ad signed-in-user and passes them as deploy-time overrides, so the postgresAdmin* placeholders in the file are never used. contributorId is injected the same way.
+
+Optional edits:
+
+namePrefix (jf-dev) / location (westus3) — safe to reuse. Globally-unique resources append uniqueString(resourceGroup().id), so the prefix never collides across accounts; location defaults to the resource group's region.
+extraOpenAiAccountIds — any hand-created Foundry accounts in other regions.
+azureModelsJson / azureScreeningModel — the Foundry model set and the cheap model used to stratify the panel.
+
+Only if you deploy Bicep directly (az deployment group create) instead of via bootstrap.sh: set postgresAdminObjectId / postgresAdminPrincipalName to your real Entra object ID and UPN first. The shipped 0000… / admin@example.com values can't register as the Postgres AAD admin and the deploy will fail.
+
+The commands below assume the shipped jf-dev prefix. If you change namePrefix, substitute it in resource names accordingly (the job becomes <your-prefix>-job, etc.).
+
+### 2. Deploy + build + point the job — `scripts/bootstrap.sh`
+Deploys the Bicep stack, then builds (`--platform linux/amd64`), pushes the image (SHA-tagged), and repoints the Job at it. Derives your `contributorId` (hash of your UPN) automatically.
+```bash
+./scripts/bootstrap.sh
+```
+> Bicep deploy, image push, and job update are three independent operations. Config-only changes don't need a rebuild; a real image change does.
+
+### 3. Create schema + grants — `scripts/db_setup.sh`
+Run **once**, as yourself (the AAD admin), with your client IP on the server firewall. Applies `db/schema.sql` and grants the runtime identity least-privilege access.
+```bash
+./scripts/db_setup.sh
+```
+
+### 4. Grant yourself Key Vault access, then set the keys — `scripts/kvperm.sh`
+Grants your user **Key Vault Secrets Officer** on the deployed vault. **Wait 2–5 min** for propagation, then set the external-provider keys.
+```bash
+./scripts/kvperm.sh
+VAULT=$(az keyvault list -g jobfinder-rg --query "[0].name" -o tsv)
+az keyvault secret set --vault-name "$VAULT" --name GEMINI-API-KEY   --value "..."
+az keyvault secret set --vault-name "$VAULT" --name NVIDIA-API-KEY   --value "..."
+az keyvault secret set --vault-name "$VAULT" --name MISTRAL-API-KEY  --value "..."
+az keyvault secret set --vault-name "$VAULT" --name COHERE-API-KEY   --value "..."
+```
+
+### 5. (Optional) keyless CI to ACR — `scripts/oidc.sh`
+Sets up GitHub OIDC federated credentials so `image.yml` can build and push to ACR with no stored keys. Derives owner/repo IDs from your git remote via `gh`.
+```bash
+./scripts/oidc.sh
+```
+
+### 6. Upload config blobs
+Put your `instructions.md` (rubric + résumé), `sources.json`, and `filterKeywords.json` into the `config` blob container. Use the `.example` files in the repo as templates.
+
+### 7. First run
+
+No env flags are required. On a fresh database the run auto-builds the 30-job panel (no active panel exists yet) with a seed derived from the build timestamp, then scores it. Just start the job:
+
+```bash
+az containerapp job start -g jobfinder-rg -n jf-dev-job
+```
+The daily cron takes over after that. Two optional knobs for the research:
+
+Set AZURE_SWEEP_START (a YYYY-MM-DD date) to enable the batch-size sweep, which rotates {1,2,3,5,10} deterministically from that anchor. Left unset, every run uses batch size 1 — the cleanest setting for per-job token measurement.
+Set AZURE_PANEL_SEED only to reproduce a specific prior panel build; otherwise the timestamp-derived seed is preferred (it carries a traceable build time).
+
+Verify the job image before a real run:
+
+```bash
+az containerapp job show -g jobfinder-rg -n jf-dev-job \
+  --query "properties.template.containers[0].image" -o tsv
+```
+---
+
+## Runtime configuration (env)
+
+The Bicep module injects the wiring (`KEYVAULT_URI`, `AZURE_STORAGE_ACCOUNT`, `POSTGRES_DSN`, `AZURE_OPENAI_ENDPOINT`, `AZURE_MODELS`, `AZURE_SCREENING_MODEL`, `AZURE_CONTRIBUTOR_ID`, `AZURE_CLIENT_ID`). The knobs you may set by hand:
+
+| Env | Purpose | Default |
+|---|---|---|
+| `AZURE_SWEEP_START` | Anchor date for the batch-size sweep | (unset → smallest batch) |
+| `AZURE_PANEL_SEED` | Seed for panel build (required for a build) | `0` (refuses) |
+| `AZURE_REBUILD_PANEL` | Force a panel rebuild this run | `false` |
+| `AZURE_PANEL_ENABLED` / `AZURE_PANEL_SIZE` | Toggle / size the fixed panel | `true` / `30` |
+| `AZURE_BATCH_SIZE` | Manual override of the sweep (debug) | (sweep) |
+| `AZURE_TEMPERATURE` | Run-level temperature | `1` |
+| `AZURE_MAX_PER_COMPANY` | Cap postings per company | `0` (no cap) |
+
+---
+
+## Status / roadmap
+
+- **`openai.bicep` model deployments** — the Foundry *account* deploys today; the 8 model deployment resources are authored but commented out. Wiring them up (the same 8 in `azureModelsJson`) is the next branch.
+- **Anthropic Messages scorer** for Claude — deferred; needs a separate protocol implementation.
+- **`run_kind` / floor-run tier** — schema-ready, currently hardcoded `"main"`.
+
+## Repo layout
 
 ```
 .
-├── main.go                  # entrypoint + handler orchestration
-├── helpers.go               # Job type, collect(), generic fetchJSON, S3/SSM helpers
-├── greenhouse.go            # Greenhouse ATS fetcher + normalization
-├── lever.go                 # Lever ATS fetcher + normalization
-├── ashby.go                 # Ashby ATS fetcher + normalization
-├── filter.go                # include/exclude keyword filtering
-├── gemini.go                # Gemini request/response, scoring, rank join
-├── aiErrors&Throttling.go   # TPM sliding-window throttle, retry/backoff
-├── database.go              # DynamoDB read/write, dedup keys, GC sweep
-├── spreadsheet.go           # Google Sheets export (scan table, clear + rewrite)
-├── logging.go               # slog JSON logging buffered to S3
-├── template.yaml            # AWS SAM infrastructure definition
-├── samconfig.toml           # SAM deploy configuration
-└── .github/workflows/
-    └── deploy.yml           # OIDC CI/CD: build + deploy on push to main
+├── main.go                 # entrypoint; dispatches on CLOUD_PROVIDER
+├── config_azure.go / _aws.go   # per-cloud config sources (models, panel, sweep)
+├── store_azure.go  / _aws.go   # per-cloud persistence
+├── secrets_azure.go / _keyvault.go / _aws.go  # per-cloud secret resolution
+├── scorer_openai.go        # OpenAI-compatible scorer (Foundry + external)
+├── panel.go / batchsweep.go    # 30-job panel build + batch-size rotation
+├── db/schema.sql, db/grants.sql
+├── infra/                  # Bicep: main + modules (openai, postgres, keyVault, …)
+└── scripts/                # bootstrap, db_setup, kvperm, oidc
 ```
-
----
-
-## Configuration
-
-Three files live in the S3 config bucket and drive behavior without code changes:
-
-- **`sources.json`** — a map of provider → list of company slugs to scrape, e.g. `{ "greenhouse": ["stripe", ...], "lever": [...], "ashby": [...] }`.
-- **`filterKeywords.json`** — `{ "include": [...], "exclude": [...] }` applied to job titles. A single occurrence of an 'exclude' keyword in the title filters out job and the title must include, at least, one word from the 'include' list unless 'include' list is empty.
-- **`instructions.md`** — the scoring rubric handed to Gemini as system instructions plus the candidate's background: CV, skills, experience, etc. Encodes the hard-fail gates and scoring bands.
-
-The Sheets export is configured entirely through infrastructure, not S3 files: the target sheet is set by the `SPREADSHEETID` environment variable in `template.yaml`, and the Google service-account credentials are pulled at runtime from the `GCP-Project-Key` SSM SecureString. The export targets a tab named `Jobs` (columns A–J) and rewrites it in full each run.
-
-Several values in code are tunable as API limits or models change — batch size (smaller = more precise scoring, larger = fewer requests), the request ticker interval, the token-per-minute budget, and the Gemini model ID. These are the levers to adjust if you swap models or hit different rate limits.
-
----
-
-### Permissions for the deploying user
-
-The Lambda's own runtime permissions are already defined in `template.yaml` and created automatically when the stack deploys — you don't need to set those up. What you *do* need is for the IAM user running `sam deploy` (the one whose access key is configured in your AWS CLI) to have permission to create the stack and everything in it.
-
-`sam deploy` provisions CloudFormation stacks, IAM roles, Lambda functions, a DynamoDB table, an EventBridge schedule, and an S3 upload bucket. Because the stack creates an IAM role, the deploy acknowledges `CAPABILITY_IAM` (already set in `samconfig.toml`), which means the deploying user must be allowed to create roles.
-
-The simplest setup for a personal deploy is to attach these two AWS-managed policies to the user:
-
-- **`PowerUserAccess`** — full access to AWS services without account-level IAM/org management
-- **`IAMFullAccess`** — required because the stack creates the Lambda execution role
-
-If you'd rather not grant IAM-wide access, you can scope a custom deploy policy down to just `cloudformation:*`, `iam:*Role*`, `lambda:*`, `dynamodb:*`, `events:*`, and `s3:*` on the relevant resources — but that's fiddly to maintain, and for a single-user project the managed policies above are the pragmatic choice.
-
-> These deploy permissions are distinct from what the running function can do. The function itself only gets the scoped DynamoDB / S3 / SSM access defined in `template.yaml`.
-
-## Deployment
-
-Built and deployed with the AWS SAM CLI:
-
-**To avoid edits to template.yaml, match these names and region exactly:**
-- The deploy region is set in `samconfig.toml` (currently `us-east-2`). Create all resources below in that same region — or change the region in `samconfig.toml` and stay consistent.
-- An SSM Parameter Store parameter named exactly `GEMINIAPIKEY`, of type `SecureString`, holding your Gemini API key (template resolves its ARN automatically).
-- An S3 bucket named `jobfinder-config-files` containing `instructions.md`, `sources.json`, and `filterKeywords.json`.
-- An S3 bucket named `jobfinder-log-bucket`.
-- An SSM Parameter Store parameter named exactly `GCP-Project-Key`, of type `SecureString`, holding the JSON key for a Google Cloud service account that has the Sheets API.
-- A Google Sheet whose ID is set as `SPREADSHEETID` in `template.yaml`, containing a tab named `Jobs`, and **shared with the service account's email** (as Editor) so it can write to it.
-
-**Note:** the function runs daily at 13:00 UTC. Edit the `cron(0 13 * * ? *)` line to change the schedule.
-
-```bash
-sam build
-sam deploy
-```
-
-Deploy settings (stack name, region, S3 prefix) are in `samconfig.toml`. The function targets `provided.al2023` on arm64 with a 900-second timeout — generous headroom for the paced scoring loop, which is deliberately slow to stay under rate limits and to improve grading efficiency.
-
-> **Note:** because the DynamoDB table is a named, stateful resource with a fixed key schema, changing its keys requires tearing down and recreating the stack — in-place updates won't apply a new key schema.
-
-### CI/CD (GitHub Actions)
-
-After the first manual deploy establishes the stack, subsequent deploys are automatic. `.github/workflows/deploy.yml` runs on every push to `main` that touches code or infra (`**.go`, `template.yaml`, `samconfig.toml`, `go.mod`, `go.sum`) and simply runs `sam build` then `sam deploy`.
-
-Authentication is **keyless** via GitHub OIDC — no AWS access keys are stored as secrets. The workflow assumes an IAM role (`JobFinderDeploy`) whose trust policy is scoped to this repo's OIDC identity, and that role carries the same deploy permissions described above. To run this under your own account, create an equivalent role with a GitHub OIDC trust policy and update the `role-to-assume` ARN and `aws-region` in the workflow:
-
-```yaml
-- uses: aws-actions/configure-aws-credentials@v4
-  with:
-    role-to-assume: arn:aws:iam::<YOUR_ACCOUNT_ID>:role/JobFinderDeploy
-    role-session-name: jobfinder-deploy
-    aws-region: us-east-2
-```
-
----
-
-## Cost
-
-Operates within the AWS and Gemini free tiers. One Lambda invocation per day, on-demand DynamoDB at trivial volume, a handful of small S3 objects, and free-tier Gemini scoring — effectively $0/month to run for duration of AWS free-tier service. After AWS free-tier expiration, it should still cost under $1 a month to run as long as log file bucket is purged regularly. 
-
----
-
-## Roadmap
-
-- Bidirectional Sheets sync: read edits (`has_applied`, manual score overrides) back from the sheet into DynamoDB before the daily collect/score/export cycle (the one-way export is done; the read-back is the remaining half)
-- Read-time filtering at the export layer
-- Setup CloudWatch to alert a major faults
-- Implementation of additional ATS providers and job boards that have RSS feeds
-- Improved keying to Gemini to prevent the rare scoring malfunctions
-- Optional salary-band scoring (compensation is already captured at ingest but intentionally not yet sent to the scorer)

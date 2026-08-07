@@ -49,7 +49,11 @@ param cronSchedule string = '0 13 * * *'
 @description('Deploy-time contributor identity token; injected by bootstrap.sh')
 param contributorId string
 
+@description('URI for the user keyvault')
+param keyVaultUri string
+
 var baseEnv = [
+  { name: 'KEYVAULT_URI', value: keyVaultUri}
   {
   // ID for user, specifically for data-evaluation purposes
   // set to "test" currently for trial cron run
