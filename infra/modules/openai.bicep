@@ -7,8 +7,6 @@ param location string
 @description('SKU for the account.')
 param skuName string = 'S0'
 
-// Modern unified "Foundry resource" kind, spanning both OpenAI-native
-// models and the broader Foundry model catalog.
 resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   name: name
   location: location
@@ -27,82 +25,142 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   }
 }
 
-// gpt-4.1-mini: OpenAI-native, deploys via the standard OpenAI model
-// format. High confidence in this shape.
-/*resource gpt41Mini 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+resource gpt54mini 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
   parent: account
-  name: 'gpt-4.1-mini'
+  name: 'gpt-5.4-mini'          //chosen deployment name — this is what the scorer targets
   sku: {
-    name: 'GlobalStandard'
-    capacity: 10
+    name: 'GlobalStandard'     
+    capacity: 500                // TPM in thousands
   }
   properties: {
     model: {
-      format: 'OpenAI'
-      name: 'gpt-4.1-mini'
-      version: '2025-04-14'
+      format: 'OpenAI'          
+      name: 'gpt-5.4-mini'           // wire model name
+      version: '2026-03-17'     
     }
+    versionUpgradeOption: 'NoAutoUpgrade'
   }
 }
 
-// phi-4: Foundry "Models-as-a-Service" catalog entry, not OpenAI-native.
-// Authored using the same accounts/deployments shape for template
-// consistency, but the exact model.version/SKU/regional availability has
-// NOT been verified against the live Foundry catalog - bicep build only
-// proves this resource shape compiles, not that this model is purchasable
-// in the chosen region. Verify before actual deployment.
-resource phi4 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+resource gpt53codex 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
   parent: account
-  name: 'phi-4'
+  name: 'gpt-5.3-codex'          //chosen deployment name — this is what the scorer targets
   sku: {
-    name: 'GlobalStandard'
-    capacity: 10
+    name: 'GlobalStandard'     
+    capacity: 500                // TPM in thousands
   }
   properties: {
     model: {
-      format: 'Microsoft'
-      name: 'Phi-4'
-      version: '1'
+      format: 'OpenAI'          
+      name: 'gpt-5.3-codex'           // wire model name
+      version: '2026-02-24'     
     }
+    versionUpgradeOption: 'NoAutoUpgrade'
   }
 }
 
-// llama-3.3-70b: Foundry Models-as-a-Service catalog entry (Meta). Same
-// verification caveat as phi-4 above.
-resource llama33 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+resource gpt54nano 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
   parent: account
-  name: 'llama-3.3-70b'
+  name: 'gpt-5.4-nano'          //chosen deployment name — this is what the scorer targets
   sku: {
-    name: 'GlobalStandard'
-    capacity: 10
+    name: 'GlobalStandard'     
+    capacity: 2500                // TPM in thousands
   }
   properties: {
     model: {
-      format: 'Meta'
-      name: 'Llama-3.3-70B-Instruct'
-      version: '1'
+      format: 'OpenAI'          
+      name: 'gpt-5.4-nano'           // wire model name
+      version: '2026-03-17'     
     }
+    versionUpgradeOption: 'NoAutoUpgrade'
   }
 }
 
-// deepseek-v3: Foundry Models-as-a-Service catalog entry (DeepSeek). Same
-// verification caveat as phi-4 above.
-resource deepseekV3 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+resource gpt54regular 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
   parent: account
-  name: 'deepseek-v3'
+  name: 'gpt-5.4'          //chosen deployment name — this is what the scorer targets
   sku: {
-    name: 'GlobalStandard'
-    capacity: 10
+    name: 'GlobalStandard'     
+    capacity: 500                // TPM in thousands
   }
   properties: {
     model: {
-      format: 'DeepSeek'
-      name: 'DeepSeek-V3'
-      version: '1'
+      format: 'OpenAI'          
+      name: 'gpt-5.4'           // wire model name
+      version: '2026-03-05'     
     }
+    versionUpgradeOption: 'NoAutoUpgrade'
   }
 }
-*/
+
+resource gpt55regular 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: account
+  name: 'gpt-5.5'          //chosen deployment name — this is what the scorer targets
+  sku: {
+    name: 'GlobalStandard'     
+    capacity: 500                // TPM in thousands
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'          
+      name: 'gpt-5.5'           // wire model name
+      version: '2026-04-24'     
+    }
+    versionUpgradeOption: 'NoAutoUpgrade'
+  }
+}
+
+resource gpt56sol 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: account
+  name: 'gpt-5.6-sol'          //chosen deployment name — this is what the scorer targets
+  sku: {
+    name: 'GlobalStandard'     
+    capacity: 500                // TPM in thousands
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'          
+      name: 'gpt-5.6-sol'           // wire model name
+      version: '2026-07-09'     
+    }
+    versionUpgradeOption: 'NoAutoUpgrade'
+  }
+}
+
+resource gpt56luna 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: account
+  name: 'gpt-5.6-luna'          //chosen deployment name — this is what the scorer targets
+  sku: {
+    name: 'GlobalStandard'     
+    capacity: 500                // TPM in thousands
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'          
+      name: 'gpt-5.6-luna'           // wire model name
+      version: '2026-07-09'     
+    }
+    versionUpgradeOption: 'NoAutoUpgrade'
+  }
+}
+
+resource gpt56terra 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: account
+  name: 'gpt-5.6-terra'          //chosen deployment name — this is what the scorer targets
+  sku: {
+    name: 'GlobalStandard'     
+    capacity: 500                // TPM in thousands
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'          
+      name: 'gpt-5.6-terra'           // wire model name
+      version: '2026-07-09'     
+    }
+    versionUpgradeOption: 'NoAutoUpgrade'
+  }
+}
+
 output id string = account.id
 output endpoint string = account.properties.endpoint
 output name string = account.name
