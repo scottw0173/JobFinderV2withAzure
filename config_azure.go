@@ -69,40 +69,6 @@ func (c *azureConfigSource) File(ctx context.Context, name string) ([]byte, erro
 	return data, nil
 }
 
-// defaultAzureModels is the 12-model panel CLAUDE.md §12 selected (open-weight
-// + current-generation + chat-capable), in the table's row order. Every
-// launch-day VERIFY field - BaseURL, Deployment, TPM, RPM, AuthScope - is
-// deliberately left at its zero value: those are exactly §12's "Serving
-// (VERIFY)" column (native Foundry vs. Fireworks-served deployments sit at
-// different endpoints), and §9 says never fabricate an account-dependent
-// value. Consequence: handler()'s TPM/RPM==0 and BaseURL=="" gates will
-// refuse to score every model here until the real values land - intended,
-// not a bug, until the Azure account exists. This is the opposite intent
-// from the old 4-entry stub this replaced, which pointed at local Ollama
-// because those names were meant to be literally Ollama-testable; these 12
-// are real frontier open-weight models (26B-397B) that can't run on this
-// machine at all (see the Ollama-hardware-limits memory), so a fake
-// localhost BaseURL would be actively misleading rather than a harmless
-// placeholder. Protocol is the one field set now: "openai" is §12's
-// documented build-now prior (near-certainly OpenAI-compatible for all 12),
-// which isn't account-dependent. Local Ollama smoke testing continues to go
-// through the AZURE_MODELS env override (docker-compose.yml), untouched by
-// this list.
-var defaultAzureModels = []ModelConfig{
-	{Name: "DeepSeek-V4-Pro", Protocol: "openai"},   // DeepSeek, MoE, native or Fireworks
-	{Name: "DeepSeek-V4-Flash", Protocol: "openai"}, // DeepSeek, MoE, native or Fireworks
-	{Name: "Kimi-K2.6", Protocol: "openai"},         // Moonshot, MoE, native or Fireworks
-	{Name: "Kimi-K2.5", Protocol: "openai"},
-	{Name: "MiniMax-M2.5", Protocol: "openai"},               // MiniMax, MoE, Fireworks (FW-)
-	{Name: "GLM-5.2", Protocol: "openai"},                    // Zhipu, MoE, Fireworks (FW-)
-	{Name: "Nemotron-3-Super-120B-A12B", Protocol: "openai"}, // NVIDIA, MoE, Fireworks (FW-)
-	{Name: "Qwen3.6-35B-A3B", Protocol: "openai"},            // Alibaba, MoE, Fireworks (FW-)
-	{Name: "Qwen3.6-27B", Protocol: "openai"},                // Alibaba, Dense* (moderate confidence), Fireworks (FW-)
-	{Name: "Gemma-4-26B-A4B", Protocol: "openai"},            // Google, MoE, Fireworks (FW-)
-	{Name: "Gemma-4-31B", Protocol: "openai"},                // Google, Dense, Fireworks (FW-)
-	{Name: "Qwen3.5-397B-A17B", Protocol: "openai"},          // Alibaba, MoE, Fireworks (FW-)
-}
-
 // ExternalProvider is the connection info for one off-Foundry,
 // OpenAI-compatible provider (external-model-providers branch). Instance
 // data only, same rule as ModelConfig (CLAUDE.md §6) - SecretName is the Key
@@ -147,24 +113,6 @@ var externalProviders = map[string]ExternalProvider{
 // refuses to score a model with TPM<=0 or RPM<=0, so this entry won't run
 // until the real Gemini quota numbers are filled in below.
 var defaultExternalModels = []ModelConfig{
-	{
-		Name:         "deepseek-ai/deepseek-v4-pro", //this api is set to deprecate on 8/7/2026
-		Deployment:   "deepseek-ai/deepseek-v4-pro", //so expect to delete or to update it soon
-		Protocol:     "nvidia",
-		BaseURL:      externalProviders["nvidia"].BaseURL,
-		TPM:          1000000,
-		RPM:          40,
-		WantLogprobs: false,
-	},
-	{
-		Name:         "mistralai/mistral-medium-3.5-128b",
-		Deployment:   "mistralai/mistral-medium-3.5-128b", //this api is set to deprecate on 8/7/2026
-		Protocol:     "nvidia",                            //so expect to delete or to update it soon
-		BaseURL:      externalProviders["nvidia"].BaseURL,
-		TPM:          1000000,
-		RPM:          40,
-		WantLogprobs: false,
-	},
 	{
 		Name:         "poolside/laguna-xs-2.1",
 		Deployment:   "poolside/laguna-xs-2.1",
@@ -305,15 +253,11 @@ var defaultExternalModels = []ModelConfig{
 func (c *azureConfigSource) Models(ctx context.Context) ([]ModelConfig, error) {
 	raw := os.Getenv("AZURE_MODELS")
 	var models []ModelConfig
-	if raw == "" {
-		models = append(models, defaultAzureModels...)
-	} else if err := json.Unmarshal([]byte(raw), &models); err != nil {
-		return nil, wrapErr("parsing AZURE_MODELS", err)
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &models); err != nil {
+			return nil, wrapErr("parsing AZURE_MODELS", err)
+		}
 	}
-	// External (off-Foundry) providers ride the same run-level batch
-	// size/temperature and the same handler() loop, routed to their own
-	// Scorer instance by Protocol (wireAzure registers app.Scorers[name] per
-	// externalProviders entry) - config-only from handler()'s perspective.
 	models = append(models, defaultExternalModels...)
 	return models, nil
 }
