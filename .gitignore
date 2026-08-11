@@ -44,6 +44,7 @@ Thumbs.db
 # prompt/resume
 *.md
 !CLAUDE.md
+!TASK.md
 !instructions.example.md
 !README.md
 *.txt
