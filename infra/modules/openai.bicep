@@ -11,7 +11,7 @@ param skuName string = 'S0'
 param enableFullPanel bool = false
 
 @description('Tier-0 screening model ({name, model, version, capacity}). Always deployed regardless of enableFullPanel — required, no default here; main.bicep is the single source of truth (see main.bicepparam for the real value).')
-param screenerModel object
+param screenerModel object = { name: 'gpt-5-mini', model: 'gpt-5-mini', version: '2025-0807', capacity: 150}
 
 @description('First-party Foundry model deployments. Capacities are subscription/region-specific — override per fork.')
 param modelDeployments array = [
