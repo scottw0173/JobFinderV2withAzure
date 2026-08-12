@@ -7,6 +7,12 @@ param location string
 @description('SKU for the account.')
 param skuName string = 'S0'
 
+@description('Two-tier deploy gate: false deploys only screenerModel; true adds modelDeployments (the tier-1 graders) alongside it.')
+param enableFullPanel bool = false
+
+@description('Tier-0 screening model ({name, model, version, capacity}). Always deployed regardless of enableFullPanel — required, no default here; main.bicep is the single source of truth (see main.bicepparam for the real value).')
+param screenerModel object
+
 @description('First-party Foundry model deployments. Capacities are subscription/region-specific — override per fork.')
 param modelDeployments array = [
   { name: 'gpt-5.4-mini',  model: 'gpt-5.4-mini',  version: '2026-03-17', capacity: 500 }
@@ -37,9 +43,12 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   }
 }
 
+// Screener always deploys; graders (modelDeployments) join only when enableFullPanel = true.
+var activeModels = enableFullPanel ? concat([screenerModel], modelDeployments) : [screenerModel]
+
 @batchSize(1)
 resource deployments 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = [
-  for m in modelDeployments: {
+  for m in activeModels: {
     parent: account
     name: m.name
     sku: { name: 'GlobalStandard', capacity: m.capacity }
