@@ -352,7 +352,11 @@ func buildPanel(ctx context.Context, app *App, jobs []Job) ([]Job, error) {
 	if err != nil {
 		return nil, wrapErr("loading models for screening lookup", err)
 	}
-	model, err := resolveScreeningModel(models, app.Config.ScreeningModel())
+	screeningModel := app.Config.ScreeningModel()
+	if screeningModel == "" {
+		return nil, traceErrorf("AZURE_SCREENING_MODEL is not set - a panel build requires a screening model to stratify jobs into bands (grade-only runs with an existing panel do not need it)")
+	}
+	model, err := resolveScreeningModel(models, screeningModel)
 	if err != nil {
 		return nil, err
 	}

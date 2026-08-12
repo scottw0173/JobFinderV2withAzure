@@ -357,10 +357,7 @@ func (c *azureConfigSource) PanelSize() int {
 // Looked up by name against Models(), not defaultAzureModels directly, so it
 // inherits real BaseURL/TPM/RPM once configured.
 func (c *azureConfigSource) ScreeningModel() string {
-	if v := os.Getenv("AZURE_SCREENING_MODEL"); v != "" {
-		return v
-	}
-	return "DeepSeek-V4-Flash"
+	return strings.TrimSpace(os.Getenv("AZURE_SCREENING_MODEL"))
 }
 
 // defaultScoreBands/defaultBandTargets partition the 0-100 screening-score

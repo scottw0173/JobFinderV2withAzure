@@ -108,8 +108,8 @@ func TestAWSConfigSourceDefaults(t *testing.T) {
 		if got := c.PanelSize(); got != 30 {
 			t.Fatalf("azure PanelSize() default = %d, want 30", got)
 		}
-		if got := c.ScreeningModel(); got != "DeepSeek-V4-Flash" {
-			t.Fatalf("azure ScreeningModel() default = %q, want %q", got, "DeepSeek-V4-Flash")
+		if got := c.ScreeningModel(); got != "" {
+			t.Fatalf("azure ScreeningModel() default = %q, want %q (unset)", got, "")
 		}
 		if c.PanelSeed() != 0 {
 			t.Fatalf("azure PanelSeed() default = %d, want 0 (unset)", c.PanelSeed())

@@ -397,15 +397,29 @@ func handler(ctx context.Context) error {
 		}
 	}
 
+	// Screener fills panel_jobs (via buildPanel) but is never a grader - excluded
+	// here so it never lands in scoring_calls. Resolved once so model_count
+	// below and the loop's skip check agree on the same run's env value.
+	screeningModel := app.Config.ScreeningModel()
+	graderCount := len(models)
+	for _, m := range models {
+		if m.Name == screeningModel {
+			graderCount--
+		}
+	}
+
 	// One line marking the start of the scoring sweep with every top-level
 	// run condition (CLAUDE.md observability task) - lets Log Analytics
 	// answer "what was this run configured to do" before diving into
 	// per-batch/per-call detail below.
 	app.Logger.Info("run start",
-		"panel_size", panelSize, "batch_size", batchSize, "model_count", len(models), "run_kind", mode)
+		"panel_size", panelSize, "batch_size", batchSize, "model_count", graderCount, "run_kind", mode)
 
 	var events []ScoringEvent
 	for _, model := range models {
+		if model.Name == screeningModel {
+			continue
+		}
 		// A model with no configured TPM/RPM has no known rate limit to
 		// throttle against - refuse to score it rather than run unthrottled
 		// against a real endpoint. This is expected to
