@@ -1,8 +1,6 @@
 using 'main.bicep'
 
-param extraOpenAiAccountIds = [
-  '/subscriptions/5a1080c6-40d1-4367-a37d-ea6aff4c4824/resourceGroups/jobfinder-rg/providers/Microsoft.CognitiveServices/accounts/jobfinderv2-resource'
-]
+param extraOpenAiAccountIds = []
 
 param namePrefix = 'jf-dev'
 param location = 'westus3'
@@ -29,7 +27,6 @@ param screenerModel = {
   capacity: 150
   deployment: 'gpt-5-mini'
   protocol: 'openai'
-  baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1'
   authScope: 'https://ai.azure.com/.default'
   tpm: 150000
   rpm: 100

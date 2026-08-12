@@ -38,14 +38,14 @@ param screenerModel object
 
 @description('Tier-1 grader models - same dual-shape-object contract as screenerModel. Defaults mirror the already-deployed panel (CLAUDE.md §12).')
 param modelDeployments array = [
-  { name: 'gpt-5.4-mini',  model: 'gpt-5.4-mini',  version: '2026-03-17', capacity: 500,  deployment: 'gpt-5.4-mini',  protocol: 'openai', baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1', authScope: 'https://ai.azure.com/.default', tpm: 200000,  rpm: 1000, wantLogprobs: true }
-  { name: 'gpt-5.3-codex', model: 'gpt-5.3-codex', version: '2026-02-24', capacity: 500,  deployment: 'gpt-5.3-codex', protocol: 'openai', baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 5000, wantLogprobs: false }
-  { name: 'gpt-5.4-nano',  model: 'gpt-5.4-nano',  version: '2026-03-17', capacity: 2500, deployment: 'gpt-5.4-nano',  protocol: 'openai', baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1', authScope: 'https://ai.azure.com/.default', tpm: 2500000, rpm: 2500, wantLogprobs: true }
-  { name: 'gpt-5.4',       model: 'gpt-5.4',       version: '2026-03-05', capacity: 500,  deployment: 'gpt-5.4',       protocol: 'openai', baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 5000, wantLogprobs: true }
-  { name: 'gpt-5.5',       model: 'gpt-5.5',       version: '2026-04-24', capacity: 500,  deployment: 'gpt-5.5',       protocol: 'openai', baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
-  { name: 'gpt-5.6-sol',   model: 'gpt-5.6-sol',   version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-sol',   protocol: 'openai', baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
-  { name: 'gpt-5.6-luna',  model: 'gpt-5.6-luna',  version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-luna',  protocol: 'openai', baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
-  { name: 'gpt-5.6-terra', model: 'gpt-5.6-terra', version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-terra', protocol: 'openai', baseURL: 'https://jobfinderv2-resource.services.ai.azure.com/openai/v1', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
+  { name: 'gpt-5.4-mini',  model: 'gpt-5.4-mini',  version: '2026-03-17', capacity: 500,  deployment: 'gpt-5.4-mini',  protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 200000,  rpm: 1000, wantLogprobs: true }
+  { name: 'gpt-5.3-codex', model: 'gpt-5.3-codex', version: '2026-02-24', capacity: 500,  deployment: 'gpt-5.3-codex', protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 5000, wantLogprobs: false }
+  { name: 'gpt-5.4-nano',  model: 'gpt-5.4-nano',  version: '2026-03-17', capacity: 2500, deployment: 'gpt-5.4-nano',  protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 2500000, rpm: 2500, wantLogprobs: true }
+  { name: 'gpt-5.4',       model: 'gpt-5.4',       version: '2026-03-05', capacity: 500,  deployment: 'gpt-5.4',       protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 5000, wantLogprobs: true }
+  { name: 'gpt-5.5',       model: 'gpt-5.5',       version: '2026-04-24', capacity: 500,  deployment: 'gpt-5.5',       protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
+  { name: 'gpt-5.6-sol',   model: 'gpt-5.6-sol',   version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-sol',   protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
+  { name: 'gpt-5.6-luna',  model: 'gpt-5.6-luna',  version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-luna',  protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
+  { name: 'gpt-5.6-terra', model: 'gpt-5.6-terra', version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-terra', protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
 ]
 
 @description('Deploy-time contributor identity token; injected by bootstrap.sh')
