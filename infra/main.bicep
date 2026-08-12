@@ -138,11 +138,14 @@ module openai 'modules/openai.bicep' = {
 // Same source feeds the openai module above (ARM deployment) and AZURE_MODELS below (runtime config).
 var activeModels = enableFullPanel ? concat([screenerModel], modelDeployments) : [screenerModel]
 
+var aiAccountName = '${namePrefix}-ai-${uniqueSuffix}'
+// pass aiAccountName to the openai module's `name` param, then:
+
 var runtimeModels = [for m in activeModels: {
   name: m.name
   deployment: m.deployment
   protocol: m.protocol
-  baseURL: m.baseURL
+  baseURL: 'https://${aiAccountName}.services.ai.azure.com/openai/v1'   // derived, not literal
   authScope: m.authScope
   tpm: m.tpm
   rpm: m.rpm
