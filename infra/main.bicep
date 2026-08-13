@@ -31,7 +31,7 @@ param postgresSkuTier string = 'Burstable'
 param openAiSkuName string = 'S0'
 
 @description('Two-tier deploy gate: false deploys/lists only the screener; true adds modelDeployments (tier-1 graders) to both the Foundry account and AZURE_MODELS.')
-param enableFullPanel bool = false
+param enableFullPanel bool = true
 
 @description('Tier-0 screening model - single source of truth for both the openai module (ARM: name/model/version/capacity) and AZURE_MODELS (runtime: name/deployment/protocol/baseURL/authScope/tpm/rpm/wantLogprobs). No default: version/capacity need live-catalog verification, supplied in main.bicepparam.')
 param screenerModel object

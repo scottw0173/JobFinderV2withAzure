@@ -404,8 +404,7 @@ func (c *azureConfigSource) BandTargets() ([]BandTarget, error) {
 }
 
 // PanelSeed is required for a panel build (recorded alongside the panel for
-// reproducibility, CLAUDE.md) - 0 means unset, and the build path refuses to
-// proceed without a nonzero value rather than silently using an arbitrary one.
+// reproducibility, CLAUDE.md) - 0 means unset, and the build path will derive it.
 func (c *azureConfigSource) PanelSeed() int64 {
 	if raw := os.Getenv("AZURE_PANEL_SEED"); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
