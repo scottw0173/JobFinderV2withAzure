@@ -15,7 +15,7 @@ param postgresSkuName = 'Standard_B1ms'
 param postgresSkuTier = 'Burstable'
 param openAiSkuName = 'S0'
 
-param enableFullPanel = false
+param enableFullPanel = true
 
 // Tier-0 screener - single source of truth (main.bicep) for both the openai
 // module's ARM deployment and the runtime AZURE_MODELS JSON. version/capacity
