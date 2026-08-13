@@ -24,12 +24,12 @@ param screenerModel = {
   name: 'gpt-5-mini'
   model: 'gpt-5-mini'
   version: '2025-08-07'
-  capacity: 150
+  capacity: 500
   deployment: 'gpt-5-mini'
   protocol: 'openai'
   authScope: 'https://ai.azure.com/.default'
-  tpm: 150000
-  rpm: 100
+  tpm: 500000
+  rpm: 500
   wantLogprobs: false
 }
 
