@@ -48,3 +48,6 @@ Thumbs.db
 !instructions.example.md
 !README.md
 *.txt
+
+# copied spreadsheets
+*.csv
