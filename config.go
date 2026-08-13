@@ -3,14 +3,14 @@ package main
 import "context"
 
 type ModelConfig struct {
-	Name         string
-	Deployment   string
-	WantLogprobs bool
-	TPM          int    // tokens/minute quota; handler() refuses to score without a positive value (CLAUDE.md §8)
-	RPM          int    // requests/minute quota; same requirement
-	Protocol     string // which scorer to route to (CLAUDE.md §7), e.g. "openai"; handler() refuses to score without one
-	BaseURL      string // per-model endpoint (CLAUDE.md §6/§12) - native Foundry and Fireworks-served deployments differ
-	AuthScope    string // credential kind for this endpoint; structural only until keyless auth lands (§7/§9)
+	Name         string `json:"name"`
+	Deployment   string `json:"deployment"`
+	WantLogprobs bool   `json:"wantLogprobs"`
+	TPM          int    `json:"tpm"`       // tokens/minute quota; handler() refuses to score without a positive value (CLAUDE.md §8)
+	RPM          int    `json:"rpm"`       // requests/minute quota; same requirement
+	Protocol     string `json:"protocol"`  // which scorer to route to (CLAUDE.md §7), e.g. "openai"; handler() refuses to score without one
+	BaseURL      string `json:"baseURL"`   // per-model endpoint (CLAUDE.md §6/§12) - native Foundry and Fireworks-served deployments differ
+	AuthScope    string `json:"authScope"` // credential kind for this endpoint; structural only until keyless auth lands (§7/§9)
 }
 
 // ScoreBand is one band of the screening-score range (0-100, CLAUDE.md's
