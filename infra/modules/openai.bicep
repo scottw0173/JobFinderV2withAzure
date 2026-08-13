@@ -7,8 +7,24 @@ param location string
 @description('SKU for the account.')
 param skuName string = 'S0'
 
-// Modern unified "Foundry resource" kind, spanning both OpenAI-native
-// models and the broader Foundry model catalog.
+@description('Two-tier deploy gate: false deploys only screenerModel; true adds modelDeployments (the tier-1 graders) alongside it.')
+param enableFullPanel bool = false
+
+@description('Tier-0 screening model ({name, model, version, capacity}). Always deployed regardless of enableFullPanel — required, no default here; main.bicep is the single source of truth (see main.bicepparam for the real value).')
+param screenerModel object = { name: 'gpt-5-mini', model: 'gpt-5-mini', version: '2025-08-07', capacity: 150}
+
+@description('First-party Foundry model deployments. Capacities are subscription/region-specific — override per fork.')
+param modelDeployments array = [
+  { name: 'gpt-5.4-mini',  model: 'gpt-5.4-mini',  version: '2026-03-17', capacity: 500 }
+  { name: 'gpt-5.3-codex', model: 'gpt-5.3-codex', version: '2026-02-24', capacity: 500 }
+  { name: 'gpt-5.4-nano',  model: 'gpt-5.4-nano',  version: '2026-03-17', capacity: 2500 }
+  { name: 'gpt-5.4',       model: 'gpt-5.4',       version: '2026-03-05', capacity: 500 }
+  { name: 'gpt-5.5',       model: 'gpt-5.5',       version: '2026-04-24', capacity: 500 }
+  { name: 'gpt-5.6-sol',   model: 'gpt-5.6-sol',   version: '2026-07-09', capacity: 500 }
+  { name: 'gpt-5.6-luna',  model: 'gpt-5.6-luna',  version: '2026-07-09', capacity: 500 }
+  { name: 'gpt-5.6-terra', model: 'gpt-5.6-terra', version: '2026-07-09', capacity: 500 }
+]
+
 resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   name: name
   location: location
@@ -27,83 +43,22 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   }
 }
 
-// gpt-4.1-mini: OpenAI-native, deploys via the standard OpenAI model
-// format. High confidence in this shape.
-/*resource gpt41Mini 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
-  parent: account
-  name: 'gpt-4.1-mini'
-  sku: {
-    name: 'GlobalStandard'
-    capacity: 10
-  }
-  properties: {
-    model: {
-      format: 'OpenAI'
-      name: 'gpt-4.1-mini'
-      version: '2025-04-14'
-    }
-  }
-}
+// Screener always deploys; graders (modelDeployments) join only when enableFullPanel = true.
+var activeModels = enableFullPanel ? concat([screenerModel], modelDeployments) : [screenerModel]
 
-// phi-4: Foundry "Models-as-a-Service" catalog entry, not OpenAI-native.
-// Authored using the same accounts/deployments shape for template
-// consistency, but the exact model.version/SKU/regional availability has
-// NOT been verified against the live Foundry catalog - bicep build only
-// proves this resource shape compiles, not that this model is purchasable
-// in the chosen region. Verify before actual deployment.
-resource phi4 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
-  parent: account
-  name: 'phi-4'
-  sku: {
-    name: 'GlobalStandard'
-    capacity: 10
-  }
-  properties: {
-    model: {
-      format: 'Microsoft'
-      name: 'Phi-4'
-      version: '1'
+@batchSize(1)
+resource deployments 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = [
+  for m in activeModels: {
+    parent: account
+    name: m.name
+    sku: { name: 'GlobalStandard', capacity: m.capacity }
+    properties: {
+      model: { format: 'OpenAI', name: m.model, version: m.version }
+      versionUpgradeOption: 'NoAutoUpgrade'
     }
   }
-}
+]
 
-// llama-3.3-70b: Foundry Models-as-a-Service catalog entry (Meta). Same
-// verification caveat as phi-4 above.
-resource llama33 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
-  parent: account
-  name: 'llama-3.3-70b'
-  sku: {
-    name: 'GlobalStandard'
-    capacity: 10
-  }
-  properties: {
-    model: {
-      format: 'Meta'
-      name: 'Llama-3.3-70B-Instruct'
-      version: '1'
-    }
-  }
-}
-
-// deepseek-v3: Foundry Models-as-a-Service catalog entry (DeepSeek). Same
-// verification caveat as phi-4 above.
-resource deepseekV3 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
-  parent: account
-  name: 'deepseek-v3'
-  sku: {
-    name: 'GlobalStandard'
-    capacity: 10
-  }
-  properties: {
-    model: {
-      format: 'DeepSeek'
-      name: 'DeepSeek-V3'
-      version: '1'
-    }
-  }
-}
-*/
 output id string = account.id
 output endpoint string = account.properties.endpoint
 output name string = account.name
-

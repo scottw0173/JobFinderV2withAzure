@@ -1,8 +1,6 @@
 using 'main.bicep'
 
-param extraOpenAiAccountIds = [
-  '/subscriptions/5a1080c6-40d1-4367-a37d-ea6aff4c4824/resourceGroups/jobfinder-rg/providers/Microsoft.CognitiveServices/accounts/jobfinderv2-resource'
-]
+param extraOpenAiAccountIds = []
 
 param namePrefix = 'jf-dev'
 param location = 'westus3'
@@ -17,23 +15,23 @@ param postgresSkuName = 'Standard_B1ms'
 param postgresSkuTier = 'Burstable'
 param openAiSkuName = 'S0'
 
-// Leave empty to use the Go code's defaultAzureModels (the CLAUDE.md §12
-// 12-model panel).
-param azureModelsJson = '''
-[
-{"name":"gpt-5.4-mini","deployment":"gpt-5.4-mini","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":200000,"rpm":1000,"wantLogprobs":true},
-{"name":"gpt-5.3-codex","deployment":"gpt-5.3-codex","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":5000,"wantLogprobs":false},
-{"name":"gpt-5.4-nano","deployment":"gpt-5.4-nano","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":2500000,"rpm":2500,"wantLogprobs":true},
-{"name":"gpt-5.4","deployment":"gpt-5.4","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":5000,"wantLogprobs":true},
-{"name":"gpt-5.5","deployment":"gpt-5.5","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":false},
-{"name":"gpt-5.6-terra","deployment":"gpt-5.6-terra","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":false},
-{"name":"gpt-5.6-luna","deployment":"gpt-5.6-luna","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":false},
-{"name":"gpt-5.6-sol","deployment":"gpt-5.6-sol","protocol":"openai","baseURL":"https://jobfinderv2-resource.services.ai.azure.com/openai/v1","authScope":"https://ai.azure.com/.default","tpm":500000,"rpm":500,"wantLogprobs":false}
-]
-'''
+param enableFullPanel = true
 
-//This model, by name, is what the program will pull for filling out the panel_jobs table
-param azureScreeningModel = 'gpt-5.4-mini'
+// Tier-0 screener - single source of truth (main.bicep) for both the openai
+// module's ARM deployment and the runtime AZURE_MODELS JSON. version/capacity
+// verified against the live catalog/account (capacity is TPM in thousands).
+param screenerModel = {
+  name: 'gpt-5-mini'
+  model: 'gpt-5-mini'
+  version: '2025-08-07'
+  capacity: 500
+  deployment: 'gpt-5-mini'
+  protocol: 'openai'
+  authScope: 'https://ai.azure.com/.default'
+  tpm: 500000
+  rpm: 500
+  wantLogprobs: false
+}
 
 // Leave empty to default to '<acrLoginServer>/jobfinder:latest' - push the
 // image manually (no CI/CD wired yet) before running the Job.

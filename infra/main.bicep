@@ -30,11 +30,23 @@ param postgresSkuTier string = 'Burstable'
 @description('Azure OpenAI/Foundry account SKU.')
 param openAiSkuName string = 'S0'
 
-@description('JSON-encoded AZURE_MODELS override for the Container Apps Job - omit to use the Go code\'s defaultAzureModels.')
-param azureModelsJson string = ''
+@description('Two-tier deploy gate: false deploys/lists only the screener; true adds modelDeployments (tier-1 graders) to both the Foundry account and AZURE_MODELS.')
+param enableFullPanel bool = true
 
-@description('Name of model that will be used to screen jobs to fill out the table, panel_jobs')
-param azureScreeningModel string = ''
+@description('Tier-0 screening model - single source of truth for both the openai module (ARM: name/model/version/capacity) and AZURE_MODELS (runtime: name/deployment/protocol/baseURL/authScope/tpm/rpm/wantLogprobs). No default: version/capacity need live-catalog verification, supplied in main.bicepparam.')
+param screenerModel object
+
+@description('Tier-1 grader models - same dual-shape-object contract as screenerModel. Defaults mirror the already-deployed panel (CLAUDE.md §12).')
+param modelDeployments array = [
+  { name: 'gpt-5.4-mini',  model: 'gpt-5.4-mini',  version: '2026-03-17', capacity: 500,  deployment: 'gpt-5.4-mini',  protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 200000,  rpm: 1000, wantLogprobs: true }
+  { name: 'gpt-5.3-codex', model: 'gpt-5.3-codex', version: '2026-02-24', capacity: 500,  deployment: 'gpt-5.3-codex', protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 5000, wantLogprobs: false }
+  { name: 'gpt-5.4-nano',  model: 'gpt-5.4-nano',  version: '2026-03-17', capacity: 2500, deployment: 'gpt-5.4-nano',  protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 2500000, rpm: 2500, wantLogprobs: true }
+  { name: 'gpt-5.4',       model: 'gpt-5.4',       version: '2026-03-05', capacity: 500,  deployment: 'gpt-5.4',       protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 5000, wantLogprobs: true }
+  { name: 'gpt-5.5',       model: 'gpt-5.5',       version: '2026-04-24', capacity: 500,  deployment: 'gpt-5.5',       protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
+  { name: 'gpt-5.6-sol',   model: 'gpt-5.6-sol',   version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-sol',   protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
+  { name: 'gpt-5.6-luna',  model: 'gpt-5.6-luna',  version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-luna',  protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
+  { name: 'gpt-5.6-terra', model: 'gpt-5.6-terra', version: '2026-07-09', capacity: 500,  deployment: 'gpt-5.6-terra', protocol: 'openai', authScope: 'https://ai.azure.com/.default', tpm: 500000,  rpm: 500,  wantLogprobs: false }
+]
 
 @description('Deploy-time contributor identity token; injected by bootstrap.sh')
 param contributorId string = 'UNSET'
@@ -116,8 +128,33 @@ module openai 'modules/openai.bicep' = {
     name: '${namePrefix}-ai-${uniqueSuffix}'
     location: location
     skuName: openAiSkuName
+    enableFullPanel: enableFullPanel
+    screenerModel: screenerModel
+    modelDeployments: modelDeployments
   }
 }
+
+// Screener always present; graders (modelDeployments) join only when enableFullPanel = true.
+// Same source feeds the openai module above (ARM deployment) and AZURE_MODELS below (runtime config).
+var activeModels = enableFullPanel ? concat([screenerModel], modelDeployments) : [screenerModel]
+
+var aiAccountName = '${namePrefix}-ai-${uniqueSuffix}'
+// pass aiAccountName to the openai module's `name` param, then:
+
+var runtimeModels = [for m in activeModels: {
+  name: m.name
+  deployment: m.deployment
+  protocol: m.protocol
+  baseURL: 'https://${aiAccountName}.services.ai.azure.com/openai/v1'   // derived, not literal
+  authScope: m.authScope
+  tpm: m.tpm
+  rpm: m.rpm
+  wantLogprobs: m.wantLogprobs
+}]
+
+var azureModelsJson = string(runtimeModels)
+
+var azureScreeningModel = screenerModel.name
 
 // ---- Postgres ----
 
