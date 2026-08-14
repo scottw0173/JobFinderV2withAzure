@@ -25,8 +25,8 @@ func deriveSeed(now time.Time) int64 {
 // rebuild-without-reason reproducible, isolating PanelSeed as the only source
 // of selection variance; batch size 10 minimizes HTTP calls over ~450 jobs.
 const (
-	screeningTemperature float32 = 0
-	screeningBatchSize   int     = 2
+	screeningTemperature float32 = 1
+	screeningBatchSize   int     = 1
 )
 
 // resolveScreeningModel looks up ScreeningModel()'s name against the real

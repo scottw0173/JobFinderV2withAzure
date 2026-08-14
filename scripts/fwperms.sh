@@ -30,3 +30,5 @@ az postgres flexible-server firewall-rule create \
   --start-ip-address "$IP" \
   --end-ip-address "$IP" >/dev/null
 
+  echo "Successfully opened firewall for $IP on $SERVER_NAME"
+
